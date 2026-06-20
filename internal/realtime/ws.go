@@ -17,18 +17,24 @@ import (
 
 const writeTimeout = 10 * time.Second
 
+// Authorizer reports whether the current request may access a device.
+type Authorizer interface {
+	Authorize(ctx context.Context, deviceID int64) (bool, error)
+}
+
 // Handler serves GET /charts/{deviceId}/realtime.
 type Handler struct {
 	hub            *hub.Hub
+	authz          Authorizer
 	log            *slog.Logger
 	originPatterns []string
 }
 
-func NewHandler(h *hub.Hub, originPatterns []string, log *slog.Logger) *Handler {
+func NewHandler(h *hub.Hub, authz Authorizer, originPatterns []string, log *slog.Logger) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{hub: h, log: log, originPatterns: originPatterns}
+	return &Handler{hub: h, authz: authz, log: log, originPatterns: originPatterns}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +43,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad device id", http.StatusBadRequest)
 		return
 	}
-	// TODO(phase4): authorize the session user against this device before upgrade.
+	allowed, err := h.authz.Authorize(r.Context(), deviceID)
+	if err != nil {
+		h.log.Error("authorize", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: h.originPatterns})
 	if err != nil {

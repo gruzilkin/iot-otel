@@ -18,6 +18,7 @@ import (
 	"github.com/gruzilkin/iot-otel/internal/auth"
 	"github.com/gruzilkin/iot-otel/internal/charts"
 	"github.com/gruzilkin/iot-otel/internal/config"
+	"github.com/gruzilkin/iot-otel/internal/devices"
 	"github.com/gruzilkin/iot-otel/internal/hub"
 	"github.com/gruzilkin/iot-otel/internal/ingest"
 	"github.com/gruzilkin/iot-otel/internal/realtime"
@@ -26,6 +27,21 @@ import (
 	"github.com/gruzilkin/iot-otel/internal/web"
 	"google.golang.org/grpc"
 )
+
+// authorizer adapts the auth session + device ownership into the single-method
+// Authorizer the charts/realtime handlers expect.
+type authorizer struct {
+	auth    *auth.Auth
+	devices *devices.Service
+}
+
+func (a authorizer) Authorize(ctx context.Context, deviceID int64) (bool, error) {
+	uid, ok := a.auth.UserID(ctx)
+	if !ok {
+		return false, nil
+	}
+	return a.devices.CanAccess(ctx, uid, deviceID)
+}
 
 const (
 	tokenCacheTTL    = 30 * time.Second
@@ -57,14 +73,55 @@ func run(log *slog.Logger) error {
 	grpcServer := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(tokens)))
 	ingestv1.RegisterIngestServiceServer(grpcServer, ingest.NewService(writer, h, log))
 
-	chartsHandler := charts.NewHandler(sensors.NewService(sensors.NewPgxRepo(pool)), log)
+	sessions := auth.NewSessionManager(pool, cfg.CookieSecure)
+	var provider auth.Provider
+	if cfg.OAuthClientID != "" {
+		provider = auth.NewGitHubProvider(cfg.OAuthClientID, cfg.OAuthClientSecret, cfg.OAuthRedirectURL)
+	}
+	authH := auth.New(sessions, provider, log)
+
+	deviceSvc := devices.NewService(devices.NewRepo(pool))
+	authz := authorizer{auth: authH, devices: deviceSvc}
+
+	chartsHandler := charts.NewHandler(sensors.NewService(sensors.NewPgxRepo(pool)), authz, log)
+	realtimeHandler := realtime.NewHandler(h, authz, cfg.WSAllowedOrigins, log)
+	devicesHandler := devices.NewHandler(deviceSvc, authH, authH.CSRFToken, log)
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /charts/{deviceId}/realtime", realtime.NewHandler(h, cfg.WSAllowedOrigins, log))
-	mux.HandleFunc("GET /charts/{deviceId}/partial", chartsHandler.Partial)
-	mux.HandleFunc("GET /charts/{deviceId}", chartsHandler.Page)
+
+	// Auth endpoints (no session required).
+	mux.HandleFunc("GET /login", authH.Login)
+	mux.HandleFunc("GET /oauth2/callback", authH.Callback)
+	mux.HandleFunc("POST /logout", authH.Logout)
+	if cfg.DevLoginUserID > 0 {
+		log.Warn("dev login enabled", "user_id", cfg.DevLoginUserID)
+		mux.Handle("GET /dev-login", authH.DevLogin(cfg.DevLoginUserID))
+	}
+
+	// Static assets (public).
 	mux.Handle("GET /css/", web.StaticHandler())
-	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
+
+	// Charts: page redirects to login when unauthenticated; partial + realtime
+	// return 401 (matching the legacy entry-point behaviour).
+	mux.Handle("GET /charts/{deviceId}/realtime", authH.RequireUserAPI(realtimeHandler))
+	mux.Handle("GET /charts/{deviceId}/partial", authH.RequireUserAPI(http.HandlerFunc(chartsHandler.Partial)))
+	mux.Handle("GET /charts/{deviceId}", authH.RequireUser(http.HandlerFunc(chartsHandler.Page)))
+
+	// Device management (HTML/HTMX; redirect on missing session).
+	mux.Handle("GET /devices", authH.RequireUser(http.HandlerFunc(devicesHandler.Index)))
+	mux.Handle("POST /devices", authH.RequireUser(http.HandlerFunc(devicesHandler.Create)))
+	mux.Handle("GET /devices/{id}", authH.RequireUser(http.HandlerFunc(devicesHandler.Detail)))
+	mux.Handle("DELETE /devices/{id}", authH.RequireUser(http.HandlerFunc(devicesHandler.Delete)))
+	mux.Handle("POST /devices/{id}/tokens", authH.RequireUser(http.HandlerFunc(devicesHandler.AddToken)))
+	mux.Handle("DELETE /devices/{deviceId}/tokens/{tokenId}", authH.RequireUser(http.HandlerFunc(devicesHandler.DeleteToken)))
+
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/devices", http.StatusFound)
+	})
+
+	// Sessions load/save wraps everything; CSRF guards mutating requests.
+	rootHandler := sessions.LoadAndSave(authH.RequireCSRF(mux))
+	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: rootHandler}
 
 	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {

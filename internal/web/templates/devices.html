@@ -1,0 +1,61 @@
+{{define "devices"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>devices</title>
+<link rel="stylesheet" href="/css/site.css">
+<script src="https://unpkg.com/htmx.org@2.0.1"></script>
+<script>
+document.addEventListener('htmx:configRequest', function (e) {
+  e.detail.headers['X-CSRF-Token'] = '{{.CSRFToken}}';
+});
+</script>
+</head>
+<body>
+<h2>Devices</h2>
+<div style="display:flex; gap:2rem;">
+  <div>
+    <div id="deviceList">{{template "device-list" .}}</div>
+    <form hx-post="/devices" hx-target="#deviceList" hx-swap="innerHTML">
+      <input name="name" placeholder="device name" required>
+      <button type="submit">Add device</button>
+    </form>
+  </div>
+  <div id="content"></div>
+</div>
+<form method="post" action="/logout">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <button type="submit">Logout</button>
+</form>
+</body>
+</html>{{end}}
+
+{{define "device-list"}}<table>
+<thead><tr><th>Id</th><th>Name</th><th></th></tr></thead>
+<tbody>
+{{range .Devices}}<tr>
+  <td>{{.ID}}</td>
+  <td>{{.Name}}</td>
+  <td>
+    <button hx-get="/devices/{{.ID}}" hx-target="#content" hx-swap="innerHTML">Details</button>
+    <button hx-delete="/devices/{{.ID}}" hx-target="#deviceList" hx-swap="innerHTML" hx-confirm="Delete device {{.Name}}?">Delete</button>
+    <a href="/charts/{{.ID}}">Chart</a>
+  </td>
+</tr>{{end}}
+</tbody>
+</table>{{end}}
+
+{{define "device-edit"}}<h3>{{.Device.Name}} (id {{.Device.ID}})</h3>
+<table>
+<thead><tr><th>Token</th><th>Created</th><th>Valid until</th><th></th></tr></thead>
+<tbody>
+{{range .Tokens}}<tr>
+  <td><code>{{.Token}}</code></td>
+  <td>{{.Created}}</td>
+  <td>{{.ValidUntil}}</td>
+  <td><button hx-delete="/devices/{{$.Device.ID}}/tokens/{{.Token}}" hx-target="#content" hx-swap="innerHTML">Delete</button></td>
+</tr>{{end}}
+</tbody>
+</table>
+<button hx-post="/devices/{{.Device.ID}}/tokens" hx-target="#content" hx-swap="innerHTML">Add token</button>{{end}}

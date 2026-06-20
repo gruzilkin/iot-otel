@@ -21,8 +21,16 @@ func (f fakeReader) ReadData(_ context.Context, _ int64, _ []string, _, _ time.T
 	return f.data, nil
 }
 
+type fakeAuthorizer struct{ allow bool }
+
+func (a fakeAuthorizer) Authorize(context.Context, int64) (bool, error) { return a.allow, nil }
+
 func newMux(r charts.Reader) *http.ServeMux {
-	h := charts.NewHandler(r, nil)
+	return newMuxAuthz(r, fakeAuthorizer{allow: true})
+}
+
+func newMuxAuthz(r charts.Reader, authz charts.Authorizer) *http.ServeMux {
+	h := charts.NewHandler(r, authz, nil)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /charts/{deviceId}", h.Page)
 	mux.HandleFunc("GET /charts/{deviceId}/partial", h.Partial)
@@ -71,5 +79,16 @@ func TestChartBadDeviceID(t *testing.T) {
 	newMux(fakeReader{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/charts/notanumber", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+func TestChartForbiddenWhenNotOwner(t *testing.T) {
+	mux := newMuxAuthz(fakeReader{}, fakeAuthorizer{allow: false})
+	for _, path := range []string{"/charts/1", "/charts/1/partial"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s: want 403, got %d", path, rec.Code)
+		}
 	}
 }

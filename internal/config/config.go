@@ -17,6 +17,12 @@ type Config struct {
 	BatchMaxLatency  time.Duration
 	BatchQueueCap    int
 	WSAllowedOrigins []string
+
+	OAuthClientID     string
+	OAuthClientSecret string
+	OAuthRedirectURL  string
+	CookieSecure      bool
+	DevLoginUserID    int64
 }
 
 func Load() Config {
@@ -28,6 +34,12 @@ func Load() Config {
 		BatchMaxLatency:  envDuration("BATCH_MAX_LATENCY", 500*time.Millisecond),
 		BatchQueueCap:    envInt("BATCH_QUEUE_CAP", 4096),
 		WSAllowedOrigins: envList("WS_ALLOWED_ORIGINS"),
+
+		OAuthClientID:     os.Getenv("OAUTH_GITHUB_CLIENT_ID"),
+		OAuthClientSecret: os.Getenv("OAUTH_GITHUB_CLIENT_SECRET"),
+		OAuthRedirectURL:  env("OAUTH_REDIRECT_URL", "http://localhost:8080/oauth2/callback"),
+		CookieSecure:      envBool("COOKIE_SECURE", false),
+		DevLoginUserID:    int64(envInt("DEV_LOGIN_USER_ID", 0)),
 	}
 }
 
@@ -78,6 +90,15 @@ func envList(key string) []string {
 		}
 	}
 	return out
+}
+
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
 }
 
 func envDuration(key string, def time.Duration) time.Duration {

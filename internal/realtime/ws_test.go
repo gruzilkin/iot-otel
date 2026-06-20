@@ -14,10 +14,14 @@ import (
 	"github.com/gruzilkin/iot-otel/internal/model"
 )
 
+type allowAuthorizer struct{}
+
+func (allowAuthorizer) Authorize(context.Context, int64) (bool, error) { return true, nil }
+
 func dial(t *testing.T, h *hub.Hub, device string) (*websocket.Conn, context.Context) {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle("GET /charts/{deviceId}/realtime", NewHandler(h, nil, nil))
+	mux.Handle("GET /charts/{deviceId}/realtime", NewHandler(h, allowAuthorizer{}, nil, nil))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 

@@ -3,8 +3,11 @@ module github.com/gruzilkin/iot-otel
 go 1.26.4
 
 require (
+	github.com/alexedwards/scs/pgxstore v0.0.0-20251002162104-209de6e426de
+	github.com/alexedwards/scs/v2 v2.9.0
 	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.10.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.20.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11

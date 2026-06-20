@@ -23,16 +23,38 @@ type Reader interface {
 	ReadData(ctx context.Context, deviceID int64, names []string, start, end time.Time, limit int) (map[string][]sensors.Point, error)
 }
 
+// Authorizer reports whether the current request may access a device.
+type Authorizer interface {
+	Authorize(ctx context.Context, deviceID int64) (bool, error)
+}
+
 type Handler struct {
 	reader Reader
+	authz  Authorizer
 	log    *slog.Logger
 }
 
-func NewHandler(reader Reader, log *slog.Logger) *Handler {
+func NewHandler(reader Reader, authz Authorizer, log *slog.Logger) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{reader: reader, log: log}
+	return &Handler{reader: reader, authz: authz, log: log}
+}
+
+// authorize returns true if the request may proceed; otherwise it has already
+// written the appropriate error response.
+func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, deviceID int64) bool {
+	ok, err := h.authz.Authorize(r.Context(), deviceID)
+	if err != nil {
+		h.log.Error("authorize", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	if !ok {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 // Page renders GET /charts/{deviceId} with the initial series embedded.
@@ -41,7 +63,9 @@ func (h *Handler) Page(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// TODO(phase4): enforce ownership of deviceID by the session user.
+	if !h.authorize(w, r, deviceID) {
+		return
+	}
 	data, err := h.read(r.Context(), deviceID, time.UnixMilli(0), time.Now())
 	if err != nil {
 		h.log.Error("read chart data", "err", err)
@@ -64,7 +88,9 @@ func (h *Handler) Partial(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// TODO(phase4): enforce ownership of deviceID by the session user.
+	if !h.authorize(w, r, deviceID) {
+		return
+	}
 	start := queryMillis(r, "start", time.UnixMilli(0))
 	end := queryMillis(r, "end", time.Now())
 	data, err := h.read(r.Context(), deviceID, start, end)
