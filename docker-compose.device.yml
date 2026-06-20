@@ -1,0 +1,15 @@
+# Runs on the Raspberry Pi: reads I2C sensors and streams to the ingest service.
+# Set TARGET (host:port) and BEARER (a device token from the web UI).
+services:
+  device:
+    build: ./device
+    environment:
+      TARGET: ${TARGET}
+      BEARER: ${BEARER}
+      TLS: ${TLS:-}
+      TEMPERATURE_OFFSET: ${TEMPERATURE_OFFSET:-}
+      ALTITUDE: ${ALTITUDE:-}
+      PYTHONUNBUFFERED: "1"
+    devices:
+      - /dev/i2c-1:/dev/i2c-1
+    restart: always

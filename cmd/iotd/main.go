@@ -27,6 +27,7 @@ import (
 	"github.com/gruzilkin/iot-otel/internal/storage"
 	"github.com/gruzilkin/iot-otel/internal/web"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 // authorizer adapts the auth session + device ownership into the single-method
@@ -91,7 +92,18 @@ func run(log *slog.Logger) error {
 		log.Info("OTel metrics disabled (set OTEL_EXPORTER_OTLP_ENDPOINT to enable)")
 	}
 
-	grpcServer := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(tokens)))
+	grpcOpts := []grpc.ServerOption{grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(tokens))}
+	if cfg.GRPCTLSCertFile != "" && cfg.GRPCTLSKeyFile != "" {
+		creds, err := credentials.NewServerTLSFromFile(cfg.GRPCTLSCertFile, cfg.GRPCTLSKeyFile)
+		if err != nil {
+			return err
+		}
+		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+		log.Info("gRPC TLS enabled")
+	} else {
+		log.Warn("gRPC TLS disabled (plaintext) — only expose on a trusted network")
+	}
+	grpcServer := grpc.NewServer(grpcOpts...)
 	ingestv1.RegisterIngestServiceServer(grpcServer, ingest.NewService(writer, h, log))
 
 	sessions := auth.NewSessionManager(pool, cfg.CookieSecure)

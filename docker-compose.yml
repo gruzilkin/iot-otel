@@ -1,0 +1,51 @@
+# Server stack: Postgres + iotd + db_optimizer.
+# The device client runs separately on the Pi (docker-compose.device.yml).
+# Point OTEL_EXPORTER_OTLP_ENDPOINT at a collector / Grafana Alloy / Grafana Cloud
+# to enable metrics; leave it unset to disable.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${DB_USER:-user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      POSTGRES_DB: ${DB_NAME:-fileserver}
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  iotd:
+    build: .
+    depends_on: [db]
+    environment:
+      DB_HOST: db
+      DB_USER: ${DB_USER:-user}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      DB_NAME: ${DB_NAME:-fileserver}
+      OAUTH_GITHUB_CLIENT_ID: ${OAUTH_GITHUB_CLIENT_ID:-}
+      OAUTH_GITHUB_CLIENT_SECRET: ${OAUTH_GITHUB_CLIENT_SECRET:-}
+      OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL:-http://localhost:8080/oauth2/callback}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      WS_ALLOWED_ORIGINS: ${WS_ALLOWED_ORIGINS:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-iot-otel}
+      GRPC_TLS_CERT_FILE: ${GRPC_TLS_CERT_FILE:-}
+      GRPC_TLS_KEY_FILE: ${GRPC_TLS_KEY_FILE:-}
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    restart: unless-stopped
+
+  db_optimizer:
+    build: ./db_optimizer
+    depends_on: [db]
+    environment:
+      DB_HOST: db
+      DB_USER: ${DB_USER:-user}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      DB_NAME: ${DB_NAME:-fileserver}
+      PYTHONUNBUFFERED: "1"
+    restart: unless-stopped
+
+volumes:
+  db_data:

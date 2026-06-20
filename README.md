@@ -1,85 +1,110 @@
 # iot-otel
 
-A single Go service that ingests high-resolution sensor data over gRPC, persists
-it to PostgreSQL, serves realtime + historical charts directly to the browser,
-and exports low-resolution OpenTelemetry metrics. It replaces the previous
+A single Go service that ingests high-resolution sensor data from devices over
+gRPC, persists it to PostgreSQL, serves realtime + historical charts directly to
+the browser, and exports low-resolution OpenTelemetry metrics. It replaces a
 Kotlin/Spring + RabbitMQ backend; the Postgres schema and the Python
 `db_optimizer` (Douglas–Peucker visual downsampling + 1-week retention) are
 reused unchanged.
 
-See the full plan at `~/.claude/plans/okay-good-pushback-...md`.
+**Design split:** Postgres is the high-resolution, lossless local store powering
+zoomable charts (the weighting already preserves the exact moment conditions
+change); OTel metrics are the low-resolution envelope for automation/alerting.
 
-## Status
-
-**Phase 1 — data spine (device → gRPC → DB): implemented.**
-- gRPC `IngestService` (client-streaming) with a bearer-token auth interceptor
-  (`access_tokens`, `valid_until` enforced, short TTL cache).
-- Batched multi-row writes to `sensor_data` with size/latency flush and bounded
-  backpressure (`internal/storage`).
-- Python device client (`device/src/app.py`) switched from WebSocket to gRPC with
-  device-side timestamps, a bounded queue, and reconnect; plus a hardware-free
-  simulator (`device/src/sim.py`).
-
-Later phases (realtime hub + WS, historical charts, OAuth2/sessions + device UI,
-OTel metrics, packaging) are not yet built.
-
-## Layout
+## Architecture
 
 ```
-api/proto/ingest/v1/ingest.proto   gRPC contract
-api/gen/...                        generated Go stubs (committed)
-cmd/iotd/                          the binary (Phase 1: gRPC listener)
-internal/{config,storage,auth,ingest,model}/
-device/src/{app.py,sim.py}         Python device client + simulator (gRPC stubs committed)
-db/*.sql                           reused schema (+ dev-only seed)
-docker-compose.dev.yml             local Postgres for verification
+Pi device (Python: Adafruit SCD30/SGP40 + device-side timestamps)
+   │  gRPC client-stream, Bearer device-token in metadata
+   ▼
+┌──────────────── iotd (single Go binary) ────────────────┐
+│ gRPC ingest ─► auth interceptor ─► batch writer ─► Postgres
+│      └─► in-memory hub ─┬─► browser WebSocket (/charts/{id}/realtime)
+│                         └─► OTel aggregator ─► OTLP (metrics)
+│ HTTP: OAuth2 + sessions; charts (ECharts) + /partial; devices HTMX CRUD
+└──────────────────────────────────────────────────────────┘
+        ▲                                   ▲
+   Postgres  ◄── db_optimizer (Python: RDP weights + retention)
 ```
 
-## Configuration (env)
+The in-process hub replaces RabbitMQ's fan-out. Single instance; in-flight data
+is lost on crash (accepted trade-off — Postgres is the source of truth).
+
+## Components
+
+| Path | What |
+|---|---|
+| `cmd/iotd` | the server binary (gRPC + HTTP) |
+| `api/proto`, `api/gen` | gRPC contract + generated Go stubs |
+| `internal/{config,storage,auth,ingest,hub,sensors,charts,devices,realtime,metrics,web}` | server packages |
+| `device/` | Python device client + simulator (gRPC stubs committed) |
+| `db_optimizer/` | Python downsampling/retention worker (reused unchanged) |
+| `db/*.sql` | schema + dev seed + sessions table |
+
+## Configuration
+
+See `.env.example`. Key variables:
 
 | Var | Default | Purpose |
 |---|---|---|
-| `GRPC_ADDR` | `:50051` | gRPC listen address |
-| `DATABASE_URL` | built from `DB_*` | pgx connection string |
-| `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` | `localhost`/`5432`/`user`/`secret`/`fileserver` | used if `DATABASE_URL` unset |
-| `BATCH_MAX_SIZE` | `500` | flush when buffer reaches this many rows |
-| `BATCH_MAX_LATENCY` | `500ms` | flush at least this often |
-| `BATCH_QUEUE_CAP` | `4096` | bounded ingest queue (backpressure) |
+| `GRPC_ADDR` / `HTTP_ADDR` | `:50051` / `:8080` | listen addresses |
+| `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` | localhost/5432/user/secret/fileserver | DB (or set `DATABASE_URL`) |
+| `BATCH_MAX_SIZE` / `BATCH_MAX_LATENCY` / `BATCH_QUEUE_CAP` | 500 / 500ms / 4096 | write batching + backpressure |
+| `OAUTH_GITHUB_CLIENT_ID` / `_SECRET` / `OAUTH_REDIRECT_URL` | — | GitHub login |
+| `COOKIE_SECURE` | false | set true behind HTTPS |
+| `WS_ALLOWED_ORIGINS` | same-origin | comma-separated WebSocket origins |
+| `DEV_LOGIN_USER_ID` | 0 (off) | dev-only `/dev-login` bypass |
+| `GRPC_TLS_CERT_FILE` / `GRPC_TLS_KEY_FILE` | — | enable gRPC TLS (recommended in prod) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` + standard `OTEL_*` | unset = metrics off | metrics destination |
 
 ## Build & test
 
 ```sh
 go build ./...
-go test ./...        # unit + in-process gRPC end-to-end (no Docker needed)
+go test ./...        # unit + in-process gRPC e2e + httptest handlers (no Docker)
 ```
 
 Regenerate stubs after editing the proto (`buf` + `protoc-gen-go*` on PATH):
 
 ```sh
-buf generate                                                   # Go stubs
+buf generate                                                          # Go
 device/.venv/bin/python -m grpc_tools.protoc -I api/proto/ingest/v1 \
-  --python_out=device/src --grpc_python_out=device/src ingest.proto   # Python stubs
+  --python_out=device/src --grpc_python_out=device/src ingest.proto   # Python
 ```
 
-## End-to-end verification (requires Docker)
+## Run
+
+**Server stack** (Postgres + iotd + db_optimizer):
 
 ```sh
-# 1. Postgres with schema + a dev device/token (token: devtoken000000000000000000000000)
-docker compose -f docker-compose.dev.yml up -d
-
-# 2. Run the ingest service
-go run ./cmd/iotd
-
-# 3. Stream synthetic readings from the simulator
-TARGET=localhost:50051 BEARER=devtoken000000000000000000000000 \
-  device/.venv/bin/python device/src/sim.py
-
-# 4. Confirm rows land with device-side timestamps and ascending id
-docker compose -f docker-compose.dev.yml exec db \
-  psql -U user -d fileserver -c \
-  "select id, sensor_name, sensor_value, received_at from sensor_data order by id desc limit 8;"
+docker compose up --build -d
 ```
 
-To confirm the `db_optimizer` invariant holds, point the existing
-`../iot/db_optimizer` at this database and verify it populates
-`sensor_data_weights` without error.
+Local dev without OAuth — enable the dev login bypass:
+
+```sh
+DEV_LOGIN_USER_ID=1 go run ./cmd/iotd     # against `docker compose -f docker-compose.dev.yml up -d`
+# browse http://localhost:8080/dev-login  (logs in as the seeded device's owner)
+```
+
+**Device** (on the Pi): set `TARGET` + `BEARER` (a token created in the web UI), then
+
+```sh
+docker compose -f docker-compose.device.yml up --build -d
+```
+
+A hardware-free simulator is available for testing the server without a Pi:
+
+```sh
+TARGET=localhost:50051 BEARER=<token> device/.venv/bin/python device/src/sim.py
+```
+
+## Verification notes
+
+- Data path verified end-to-end against Postgres: simulator → gRPC → rows with
+  device timestamps and ascending ids; `db_optimizer` populates
+  `sensor_data_weights`.
+- Web path verified: authed `/devices`, `/charts/{id}` + `/partial` (ownership
+  enforced; 401 without a session), realtime WebSocket, static assets.
+- Metrics: enable by pointing `OTEL_EXPORTER_OTLP_ENDPOINT` at a collector /
+  Grafana Alloy / Grafana Cloud; `sensor.*` and `iot.*` series will appear.
