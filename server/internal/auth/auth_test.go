@@ -33,7 +33,6 @@ func newServer(t *testing.T) (*httptest.Server, *http.Client) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login", a.Login)
 	mux.HandleFunc("GET /oauth2/callback", a.Callback)
-	mux.Handle("GET /dev-login", a.DevLogin(5))
 	mux.Handle("GET /protected", a.RequireUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uid, _ := a.UserID(r.Context())
 		_, _ = w.Write([]byte("ok " + strconv.FormatInt(uid, 10)))
@@ -76,24 +75,6 @@ func TestRequireUserAPIUnauthorized(t *testing.T) {
 	srv, c := newServer(t)
 	if resp := get(t, c, srv.URL+"/api"); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("want 401, got %d", resp.StatusCode)
-	}
-}
-
-func TestDevLoginEstablishesSession(t *testing.T) {
-	srv, c := newServer(t)
-	get(t, c, srv.URL+"/dev-login")
-
-	resp, err := c.Get(srv.URL + "/protected")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("want 200, got %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if got := string(body); got != "ok 5" {
-		t.Fatalf("want body 'ok 5', got %q", got)
 	}
 }
 

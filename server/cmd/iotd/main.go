@@ -27,7 +27,6 @@ import (
 	"github.com/gruzilkin/iot-otel/server/internal/storage"
 	"github.com/gruzilkin/iot-otel/server/internal/web"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 // authorizer adapts the auth session + device ownership into the single-method
@@ -92,21 +91,12 @@ func run(log *slog.Logger) error {
 		log.Info("OTel metrics disabled (set OTEL_EXPORTER_OTLP_ENDPOINT to enable)")
 	}
 
-	grpcOpts := []grpc.ServerOption{grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(tokens))}
-	if cfg.GRPCTLSCertFile != "" && cfg.GRPCTLSKeyFile != "" {
-		creds, err := credentials.NewServerTLSFromFile(cfg.GRPCTLSCertFile, cfg.GRPCTLSKeyFile)
-		if err != nil {
-			return err
-		}
-		grpcOpts = append(grpcOpts, grpc.Creds(creds))
-		log.Info("gRPC TLS enabled")
-	} else {
-		log.Warn("gRPC TLS disabled (plaintext) — only expose on a trusted network")
-	}
-	grpcServer := grpc.NewServer(grpcOpts...)
+	// gRPC is served in plaintext; a fronting proxy (e.g. nginx) terminates TLS
+	// and forwards to this service on a trusted network.
+	grpcServer := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(tokens)))
 	ingestv1.RegisterIngestServiceServer(grpcServer, ingest.NewService(writer, h, log))
 
-	sessions := auth.NewSessionManager(pool, cfg.CookieSecure)
+	sessions := auth.NewSessionManager(pool)
 	var provider auth.Provider
 	if cfg.OAuthClientID != "" {
 		provider = auth.NewGitHubProvider(cfg.OAuthClientID, cfg.OAuthClientSecret, cfg.OAuthRedirectURL)
@@ -126,10 +116,6 @@ func run(log *slog.Logger) error {
 	mux.HandleFunc("GET /login", authH.Login)
 	mux.HandleFunc("GET /oauth2/callback", authH.Callback)
 	mux.HandleFunc("POST /logout", authH.Logout)
-	if cfg.DevLoginUserID > 0 {
-		log.Warn("dev login enabled", "user_id", cfg.DevLoginUserID)
-		mux.Handle("GET /dev-login", authH.DevLogin(cfg.DevLoginUserID))
-	}
 
 	// Static assets (public).
 	mux.Handle("GET /css/", web.StaticHandler())

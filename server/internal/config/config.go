@@ -21,11 +21,6 @@ type Config struct {
 	OAuthClientID     string
 	OAuthClientSecret string
 	OAuthRedirectURL  string
-	CookieSecure      bool
-	DevLoginUserID    int64
-
-	GRPCTLSCertFile string
-	GRPCTLSKeyFile  string
 }
 
 func Load() Config {
@@ -41,11 +36,6 @@ func Load() Config {
 		OAuthClientID:     os.Getenv("OAUTH_GITHUB_CLIENT_ID"),
 		OAuthClientSecret: os.Getenv("OAUTH_GITHUB_CLIENT_SECRET"),
 		OAuthRedirectURL:  env("OAUTH_REDIRECT_URL", "http://localhost:8080/oauth2/callback"),
-		CookieSecure:      envBool("COOKIE_SECURE", false),
-		DevLoginUserID:    int64(envInt("DEV_LOGIN_USER_ID", 0)),
-
-		GRPCTLSCertFile: os.Getenv("GRPC_TLS_CERT_FILE"),
-		GRPCTLSKeyFile:  os.Getenv("GRPC_TLS_KEY_FILE"),
 	}
 }
 
@@ -96,15 +86,6 @@ func envList(key string) []string {
 		}
 	}
 	return out
-}
-
-func envBool(key string, def bool) bool {
-	if v := os.Getenv(key); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			return b
-		}
-	}
-	return def
 }
 
 func envDuration(key string, def time.Duration) time.Duration {

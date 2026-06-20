@@ -82,16 +82,6 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-// DevLogin returns a handler that logs in as a fixed user id without OAuth.
-// Registered only when a dev user id is configured — never in production.
-func (a *Auth) DevLogin(uid int64) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		_ = a.sessions.RenewToken(r.Context())
-		a.sessions.Put(r.Context(), sessionUserKey, uid)
-		http.Redirect(w, r, a.loginRedirect, http.StatusFound)
-	}
-}
-
 // RequireUser redirects unauthenticated requests to /login (for HTML routes).
 func (a *Auth) RequireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

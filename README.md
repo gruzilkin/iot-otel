@@ -51,10 +51,7 @@ See `.env.example`. Key variables:
 | `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` | localhost/5432/user/secret/fileserver | DB (or set `DATABASE_URL`) |
 | `BATCH_MAX_SIZE` / `BATCH_MAX_LATENCY` / `BATCH_QUEUE_CAP` | 500 / 500ms / 4096 | write batching + backpressure |
 | `OAUTH_GITHUB_CLIENT_ID` / `_SECRET` / `OAUTH_REDIRECT_URL` | — | GitHub login |
-| `COOKIE_SECURE` | false | set true behind HTTPS |
 | `WS_ALLOWED_ORIGINS` | same-origin | comma-separated WebSocket origins |
-| `DEV_LOGIN_USER_ID` | 0 (off) | dev-only `/dev-login` bypass |
-| `GRPC_TLS_CERT_FILE` / `GRPC_TLS_KEY_FILE` | — | enable gRPC TLS (recommended in prod) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` + standard `OTEL_*` | unset = metrics off | metrics destination |
 
 ## Build & test
@@ -81,12 +78,9 @@ device/.venv/bin/python -m grpc_tools.protoc -I server/api/proto/ingest/v1 \
 docker compose up --build -d
 ```
 
-Local dev without OAuth — enable the dev login bypass:
-
-```sh
-(cd server && DEV_LOGIN_USER_ID=1 go run ./cmd/iotd)   # against `docker compose -f docker-compose.dev.yml up -d`
-# browse http://localhost:8080/dev-login  (logs in as the seeded device's owner)
-```
+The service must run behind an HTTPS-terminating reverse proxy (e.g. nginx): session
+cookies are `Secure`-only (login does not work over plain HTTP), and that same proxy
+terminates TLS for the device gRPC stream.
 
 **Device** (on the Pi): set `TARGET` + `BEARER` (a token created in the web UI), then
 
