@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package iot.ingest.v1;
+
+option go_package = "github.com/gruzilkin/iot-otel/api/gen/ingest/v1;ingestv1";
+
+import "google/protobuf/timestamp.proto";
+
+// IngestService is the device-facing data-plane API.
+// Auth: the device sends "authorization: Bearer <device-token>" in gRPC metadata.
+// The server derives device_id from the token; it is intentionally absent from
+// every message so a device cannot spoof another device's id.
+service IngestService {
+  // Stream is client-streaming: the device opens it once and pushes readings
+  // continuously. The server returns a summary when the client half-closes.
+  rpc Stream(stream Reading) returns (StreamSummary);
+}
+
+// A single sensor reading.
+message Reading {
+  // Sensor identifier. Currently one of: temperature, humidity, voc, ppm.
+  // Stored into sensor_data.sensor_name (VARCHAR(32)); the server validates
+  // it against an allow-list.
+  string sensor_name = 1;
+
+  // Measured value. double matches the Python sensor outputs; stored into the
+  // sensor_data.sensor_value numeric column.
+  double value = 2;
+
+  // Device-side timestamp of when the measurement was taken (UTC).
+  // Stored into sensor_data.received_at (timestamptz).
+  google.protobuf.Timestamp observed_at = 3;
+}
+
+// Returned once when the client half-closes the stream.
+message StreamSummary {
+  uint64 accepted = 1; // readings accepted into the write buffer
+  uint64 rejected = 2; // readings dropped (bad sensor_name, bad timestamp)
+}

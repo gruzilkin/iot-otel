@@ -1,0 +1,14 @@
+# Local development stack for Phase 1 verification.
+# Brings up Postgres initialised with the schema (db/*.sql) plus a dev seed
+# (a device + token). Run iotd and the device simulator against it; see README.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: fileserver
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro

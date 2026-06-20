@@ -1,0 +1,68 @@
+// Package config loads runtime configuration from the environment.
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+)
+
+type Config struct {
+	GRPCAddr        string
+	DatabaseURL     string
+	BatchMaxSize    int
+	BatchMaxLatency time.Duration
+	BatchQueueCap   int
+}
+
+func Load() Config {
+	return Config{
+		GRPCAddr:        env("GRPC_ADDR", ":50051"),
+		DatabaseURL:     databaseURL(),
+		BatchMaxSize:    envInt("BATCH_MAX_SIZE", 500),
+		BatchMaxLatency: envDuration("BATCH_MAX_LATENCY", 500*time.Millisecond),
+		BatchQueueCap:   envInt("BATCH_QUEUE_CAP", 4096),
+	}
+}
+
+// databaseURL prefers an explicit DATABASE_URL, otherwise assembles one from the
+// DB_* variables the existing docker-compose stack already uses (same defaults).
+func databaseURL() string {
+	if v := os.Getenv("DATABASE_URL"); v != "" {
+		return v
+	}
+	return fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/%s",
+		env("DB_USER", "user"),
+		env("DB_PASSWORD", "secret"),
+		env("DB_HOST", "localhost"),
+		env("DB_PORT", "5432"),
+		env("DB_NAME", "fileserver"),
+	)
+}
+
+func env(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return def
+}
