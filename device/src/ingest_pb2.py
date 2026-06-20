@@ -25,14 +25,14 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0cingest.proto\x12\riot.ingest.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"^\n\x07Reading\x12\x13\n\x0bsensor_name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01\x12/\n\x0bobserved_at\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\"3\n\rStreamSummary\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x04\x12\x10\n\x08rejected\x18\x02 \x01(\x04\x32Q\n\rIngestService\x12@\n\x06Stream\x12\x16.iot.ingest.v1.Reading\x1a\x1c.iot.ingest.v1.StreamSummary(\x01\x42:Z8github.com/gruzilkin/iot-otel/api/gen/ingest/v1;ingestv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0cingest.proto\x12\riot.ingest.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"^\n\x07Reading\x12\x13\n\x0bsensor_name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01\x12/\n\x0bobserved_at\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\"3\n\rStreamSummary\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x04\x12\x10\n\x08rejected\x18\x02 \x01(\x04\x32Q\n\rIngestService\x12@\n\x06Stream\x12\x16.iot.ingest.v1.Reading\x1a\x1c.iot.ingest.v1.StreamSummary(\x01\x42\x41Z?github.com/gruzilkin/iot-otel/server/api/gen/ingest/v1;ingestv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'ingest_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'Z8github.com/gruzilkin/iot-otel/api/gen/ingest/v1;ingestv1'
+  _globals['DESCRIPTOR']._serialized_options = b'Z?github.com/gruzilkin/iot-otel/server/api/gen/ingest/v1;ingestv1'
   _globals['_READING']._serialized_start=64
   _globals['_READING']._serialized_end=158
   _globals['_STREAMSUMMARY']._serialized_start=160

@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
 
   iotd:
-    build: .
+    build: ./server
     depends_on: [db]
     environment:
       DB_HOST: db
