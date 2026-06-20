@@ -62,7 +62,7 @@ func startServer(t *testing.T, w storage.Writer) *grpc.ClientConn {
 	lis := bufconn.Listen(1024 * 1024)
 	ts := auth.NewTokenStore(fakeTokenDB{row: tokenRow{deviceID: 99, validUntil: time.Now().Add(time.Hour)}}, time.Minute)
 	srv := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(ts)))
-	ingestv1.RegisterIngestServiceServer(srv, ingest.NewService(w, nil))
+	ingestv1.RegisterIngestServiceServer(srv, ingest.NewService(w, nil, nil))
 	go func() { _ = srv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(

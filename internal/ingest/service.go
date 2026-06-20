@@ -30,18 +30,25 @@ const maxClockSkewFuture = 24 * time.Hour
 
 var minObserved = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
-type Service struct {
-	ingestv1.UnimplementedIngestServiceServer
-	writer storage.Writer
-	log    *slog.Logger
-	now    func() time.Time
+// Publisher receives accepted readings for best-effort realtime fan-out.
+// (The in-memory hub satisfies this.)
+type Publisher interface {
+	Publish(model.Reading)
 }
 
-func NewService(writer storage.Writer, log *slog.Logger) *Service {
+type Service struct {
+	ingestv1.UnimplementedIngestServiceServer
+	writer    storage.Writer
+	publisher Publisher
+	log       *slog.Logger
+	now       func() time.Time
+}
+
+func NewService(writer storage.Writer, publisher Publisher, log *slog.Logger) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{writer: writer, log: log, now: time.Now}
+	return &Service{writer: writer, publisher: publisher, log: log, now: time.Now}
 }
 
 // Stream consumes the device's reading stream until it half-closes, then returns
@@ -69,6 +76,9 @@ func (s *Service) Stream(stream ingestv1.IngestService_StreamServer) error {
 		}
 		if err := s.writer.Enqueue(r); err != nil {
 			return status.Error(codes.Unavailable, "server shutting down")
+		}
+		if s.publisher != nil {
+			s.publisher.Publish(r) // best-effort realtime fan-out
 		}
 		accepted++
 	}

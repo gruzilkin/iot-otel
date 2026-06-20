@@ -53,7 +53,7 @@ func reading(name string, val float64, ts time.Time) *ingestv1.Reading {
 func runStream(t *testing.T, msgs []*ingestv1.Reading) (*fakeWriter, *ingestv1.StreamSummary) {
 	t.Helper()
 	w := &fakeWriter{}
-	svc := NewService(w, nil)
+	svc := NewService(w, nil, nil)
 	svc.now = func() time.Time { return testNow }
 	stream := &fakeStream{ctx: auth.WithDeviceID(context.Background(), 99), recvs: msgs}
 	if err := svc.Stream(stream); err != nil {
@@ -94,7 +94,7 @@ func TestStreamRejectsUnknownSensorAndBadClock(t *testing.T) {
 }
 
 func TestStreamRequiresDeviceIdentity(t *testing.T) {
-	svc := NewService(&fakeWriter{}, nil)
+	svc := NewService(&fakeWriter{}, nil, nil)
 	stream := &fakeStream{ctx: context.Background()} // no device id injected
 	if err := svc.Stream(stream); err == nil {
 		t.Fatal("expected Unauthenticated error, got nil")
