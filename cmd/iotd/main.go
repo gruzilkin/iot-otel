@@ -21,6 +21,7 @@ import (
 	"github.com/gruzilkin/iot-otel/internal/devices"
 	"github.com/gruzilkin/iot-otel/internal/hub"
 	"github.com/gruzilkin/iot-otel/internal/ingest"
+	"github.com/gruzilkin/iot-otel/internal/metrics"
 	"github.com/gruzilkin/iot-otel/internal/realtime"
 	"github.com/gruzilkin/iot-otel/internal/sensors"
 	"github.com/gruzilkin/iot-otel/internal/storage"
@@ -70,6 +71,26 @@ func run(log *slog.Logger) error {
 	writer := storage.NewBatchWriter(pool, cfg.BatchMaxSize, cfg.BatchQueueCap, cfg.BatchMaxLatency, log)
 	tokens := auth.NewTokenStore(pool, tokenCacheTTL)
 
+	if metrics.Enabled() {
+		mp, err := metrics.NewMeterProvider(context.Background())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = mp.Shutdown(context.Background()) }()
+		meter := mp.Meter("github.com/gruzilkin/iot-otel")
+		agg, err := metrics.NewAggregator(meter)
+		if err != nil {
+			return err
+		}
+		go agg.Run(h.SubscribeAll())
+		if err := metrics.RegisterRuntime(meter, h, writer); err != nil {
+			return err
+		}
+		log.Info("OTel metrics enabled")
+	} else {
+		log.Info("OTel metrics disabled (set OTEL_EXPORTER_OTLP_ENDPOINT to enable)")
+	}
+
 	grpcServer := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(tokens)))
 	ingestv1.RegisterIngestServiceServer(grpcServer, ingest.NewService(writer, h, log))
 
@@ -100,6 +121,20 @@ func run(log *slog.Logger) error {
 
 	// Static assets (public).
 	mux.Handle("GET /css/", web.StaticHandler())
+
+	// Health/readiness (public).
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := pool.Ping(ctx); err != nil {
+			http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("ready"))
+	})
 
 	// Charts: page redirects to login when unauthenticated; partial + realtime
 	// return 401 (matching the legacy entry-point behaviour).

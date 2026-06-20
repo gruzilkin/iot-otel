@@ -54,6 +54,10 @@ func NewBatchWriter(db DB, maxSize, queueCap int, maxLatency time.Duration, log 
 	return w
 }
 
+// QueueLen reports how many readings are buffered awaiting a flush (for
+// operational metrics / readiness).
+func (w *BatchWriter) QueueLen() int { return len(w.ch) }
+
 // Enqueue blocks while the buffer is full (backpressure) and unblocks if the
 // writer closes. The channel is never closed, so concurrent producers can never
 // panic on a send.
