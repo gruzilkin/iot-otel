@@ -48,7 +48,7 @@ func TestBatchWriterFlushesOnSize(t *testing.T) {
 	w := NewBatchWriter(db, 3, 16, time.Hour, nil) // latency huge so only size triggers
 	defer w.Close(context.Background())
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := w.Enqueue(model.Reading{DeviceID: 1, SensorName: "temperature", Value: float64(i), ObservedAt: time.Unix(int64(i), 0)}); err != nil {
 			t.Fatalf("enqueue: %v", err)
 		}
