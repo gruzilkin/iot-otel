@@ -1,0 +1,8 @@
+body { font-family: sans-serif; margin: 1rem; }
+.chart { width: 100%; height: 600px; }
+.dashboard { display: flex; }
+.dashboard .item { font-size: xxx-large; margin: auto; }
+#ppm { color: red; }
+#voc { color: orange; }
+#humidity { color: lightblue; }
+#temperature { color: green; }

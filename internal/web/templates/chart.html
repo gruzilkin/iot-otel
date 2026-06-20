@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chart {{.DeviceID}}</title>
+<link rel="stylesheet" href="/css/site.css">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+</head>
+<body>
+<div class="dashboard">
+  <div class="item" id="temperature">– C</div>
+  <div class="item" id="humidity">– %</div>
+  <div class="item" id="ppm">– ppm</div>
+  <div class="item" id="voc">– voc</div>
+</div>
+<div id="chart" class="chart"></div>
+<script>
+const SENSORS = ['temperature', 'humidity', 'ppm', 'voc'];
+const chartData = {{.Data}};
+for (const k of SENSORS) chartData[k] = chartData[k] || [];
+
+const chart = echarts.init(document.getElementById('chart'));
+chart.setOption({
+  tooltip: { trigger: 'axis' },
+  legend: { data: SENSORS },
+  xAxis: { type: 'time' },
+  yAxis: [
+    { type: 'value', name: 'C', position: 'left' },
+    { type: 'value', name: '%', position: 'left', offset: 60 },
+    { type: 'value', name: 'ppm', position: 'right' },
+    { type: 'value', name: 'voc', position: 'right', offset: 60 },
+  ],
+  dataZoom: [{ type: 'inside' }, { type: 'slider' }],
+  series: [
+    { name: 'temperature', type: 'line', showSymbol: false, yAxisIndex: 0, data: chartData.temperature },
+    { name: 'humidity', type: 'line', showSymbol: false, yAxisIndex: 1, data: chartData.humidity },
+    { name: 'ppm', type: 'line', showSymbol: false, yAxisIndex: 2, data: chartData.ppm },
+    { name: 'voc', type: 'line', showSymbol: false, yAxisIndex: 3, data: chartData.voc },
+  ],
+});
+
+let renderTask;
+function renderChart() {
+  clearTimeout(renderTask);
+  renderTask = setTimeout(() => {
+    chart.setOption({ series: SENSORS.map(k => ({ data: chartData[k] })) });
+  }, 1);
+}
+
+function mergeUpdates(update) {
+  for (const k of SENSORS) {
+    const m = new Map();
+    (chartData[k] || []).forEach(e => m.set(e[0], e[1]));
+    (update[k] || []).forEach(e => m.set(e[0], e[1]));
+    chartData[k] = [...m.keys()].sort((a, b) => a - b).map(t => [t, m.get(t)]);
+  }
+  renderChart();
+}
+
+let fetchTask;
+function scheduleFetch(start, end) {
+  clearTimeout(fetchTask);
+  fetchTask = setTimeout(() => fetchUpdates(start, end), 100);
+}
+function fetchUpdates(start, end) {
+  let url = location.pathname + '/partial';
+  const q = [];
+  if (start != null) q.push('start=' + Math.floor(start));
+  if (end != null) q.push('end=' + Math.ceil(end));
+  if (q.length) url += '?' + q.join('&');
+  fetch(url)
+    .then(r => { if (r.status === 401) { location.reload(); return null; } return r.json(); })
+    .then(d => { if (d) mergeUpdates(d); });
+}
+
+chart.on('datazoom', () => {
+  const dz = chart.getOption().dataZoom[0];
+  scheduleFetch(dz.startValue, dz.endValue);
+});
+
+const units = { temperature: ' C', humidity: ' %', ppm: ' ppm', voc: '' };
+function updateKpi(name, value) {
+  const el = document.getElementById(name);
+  if (!el) return;
+  const text = (name === 'ppm' || name === 'voc') ? Math.round(value) : value.toFixed(2);
+  el.textContent = text + units[name];
+}
+
+let ws;
+function openWS() {
+  const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  ws = new WebSocket(proto + location.host + location.pathname + '/realtime');
+  ws.onmessage = e => {
+    if (e.data === 'pong') return;
+    const m = JSON.parse(e.data);
+    for (const k of SENSORS) {
+      if (m[k] !== undefined) { chartData[k].push([m.receivedAt, m[k]]); updateKpi(k, m[k]); }
+    }
+    renderChart();
+  };
+  ws.onclose = () => setTimeout(() => { openWS(); fetchUpdates(); }, 5000);
+}
+openWS();
+setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 30000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && (!ws || ws.readyState !== WebSocket.OPEN)) openWS();
+});
+window.addEventListener('resize', () => chart.resize());
+</script>
+</body>
+</html>

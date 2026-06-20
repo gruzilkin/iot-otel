@@ -16,11 +16,14 @@ import (
 
 	ingestv1 "github.com/gruzilkin/iot-otel/api/gen/ingest/v1"
 	"github.com/gruzilkin/iot-otel/internal/auth"
+	"github.com/gruzilkin/iot-otel/internal/charts"
 	"github.com/gruzilkin/iot-otel/internal/config"
 	"github.com/gruzilkin/iot-otel/internal/hub"
 	"github.com/gruzilkin/iot-otel/internal/ingest"
 	"github.com/gruzilkin/iot-otel/internal/realtime"
+	"github.com/gruzilkin/iot-otel/internal/sensors"
 	"github.com/gruzilkin/iot-otel/internal/storage"
+	"github.com/gruzilkin/iot-otel/internal/web"
 	"google.golang.org/grpc"
 )
 
@@ -54,9 +57,13 @@ func run(log *slog.Logger) error {
 	grpcServer := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(tokens)))
 	ingestv1.RegisterIngestServiceServer(grpcServer, ingest.NewService(writer, h, log))
 
+	chartsHandler := charts.NewHandler(sensors.NewService(sensors.NewPgxRepo(pool)), log)
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /charts/{deviceId}/realtime", realtime.NewHandler(h, cfg.WSAllowedOrigins, log))
-	mux.HandleFunc("GET /charts/{deviceId}", livePage)
+	mux.HandleFunc("GET /charts/{deviceId}/partial", chartsHandler.Partial)
+	mux.HandleFunc("GET /charts/{deviceId}", chartsHandler.Page)
+	mux.Handle("GET /css/", web.StaticHandler())
 	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
 
 	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
@@ -104,24 +111,3 @@ func run(log *slog.Logger) error {
 
 	return writer.Close(shutdownCtx)
 }
-
-// livePage is a minimal debugging page that streams a device's readings over
-// the realtime WebSocket. The full ECharts UI replaces it in a later phase.
-func livePage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(livePageHTML))
-}
-
-const livePageHTML = `<!doctype html><meta charset=utf-8><title>live</title>
-<h3>live readings</h3><pre id=out>connecting…</pre>
-<script>
-const out = document.getElementById('out');
-const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-const ws = new WebSocket(proto + location.host + location.pathname + '/realtime');
-ws.onmessage = e => {
-  if (e.data === 'pong') return;
-  out.textContent = new Date().toISOString() + '  ' + e.data + '\n' + out.textContent;
-};
-ws.onclose = () => out.textContent = 'closed\n' + out.textContent;
-setInterval(() => ws.readyState === 1 && ws.send('ping'), 30000);
-</script>`
