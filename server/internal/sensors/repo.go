@@ -1,8 +1,9 @@
 package sensors
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -52,6 +53,6 @@ func (r *pgxRepo) SmartFind(ctx context.Context, deviceID int64, sensorName stri
 		return nil, err
 	}
 	// UNION does not guarantee order; the chart expects ascending time.
-	sort.Slice(pts, func(i, j int) bool { return pts[i].TimestampMillis < pts[j].TimestampMillis })
+	slices.SortFunc(pts, func(a, b Point) int { return cmp.Compare(a.TimestampMillis, b.TimestampMillis) })
 	return pts, nil
 }

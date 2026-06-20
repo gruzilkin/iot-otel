@@ -90,10 +90,11 @@ func (w *BatchWriter) run() {
 	defer close(w.doneFlush)
 
 	buf := make([]model.Reading, 0, w.maxSize)
+	// NewTimer starts immediately; keep it dormant until the first buffered
+	// reading arms it. Since Go 1.23, Stop alone guarantees the channel holds
+	// no stale value, so no manual drain is needed.
 	timer := time.NewTimer(w.maxLatency)
-	if !timer.Stop() {
-		<-timer.C
-	}
+	timer.Stop()
 	timerActive := false
 
 	resetTimer := func() {
@@ -109,12 +110,7 @@ func (w *BatchWriter) run() {
 		w.flush(buf)
 		buf = buf[:0]
 		if timerActive {
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+			timer.Stop()
 			timerActive = false
 		}
 	}
@@ -153,7 +149,7 @@ func (w *BatchWriter) flush(batch []model.Reading) {
 	defer cancel()
 
 	var lastErr error
-	for attempt := 0; attempt < flushAttempts; attempt++ {
+	for range flushAttempts {
 		if err := w.exec(ctx, batch); err != nil {
 			lastErr = err
 			continue
