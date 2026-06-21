@@ -60,7 +60,7 @@ func (d fakeTokenDB) QueryRow(context.Context, string, ...any) pgx.Row { return 
 func startServer(t *testing.T, w storage.Writer) *grpc.ClientConn {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
-	ts := auth.NewTokenStore(fakeTokenDB{row: tokenRow{deviceID: 99, validUntil: time.Now().Add(time.Hour)}}, time.Minute)
+	ts := auth.NewTokenStore(fakeTokenDB{row: tokenRow{deviceID: 99, validUntil: time.Now().Add(time.Hour)}})
 	srv := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(ts)))
 	ingestv1.RegisterIngestServiceServer(srv, ingest.NewService(w, nil, nil))
 	go func() { _ = srv.Serve(lis) }()

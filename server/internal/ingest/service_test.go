@@ -82,7 +82,7 @@ func TestStreamRejectsUnknownSensorAndBadClock(t *testing.T) {
 	w, summary := runStream(t, []*ingestv1.Reading{
 		reading("co2_pretend", 1, testNow),                                  // not in allow-list
 		reading("temperature", 1, testNow.Add(48*time.Hour)),                // too far future
-		reading("humidity", 1, time.Date(2010, 1, 1, 0, 0, 0, 0, time.UTC)), // pre-2020
+		reading("humidity", 1, testNow.Add(-8*24*time.Hour)),                // older than maxBackfill
 		reading("voc", 30, testNow),                                         // valid
 	})
 	if summary.Accepted != 1 || summary.Rejected != 3 {

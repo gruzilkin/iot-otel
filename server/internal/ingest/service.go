@@ -24,11 +24,15 @@ var allowedSensors = map[string]struct{}{
 	"ppm":         {},
 }
 
-// maxClockSkewFuture / minObserved guard against devices with a wrong clock
-// (e.g. a Pi that booted before NTP sync), since timestamps are now device-side.
-const maxClockSkewFuture = 24 * time.Hour
-
-var minObserved = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+// Timestamps are device-side, so guard the two failure modes separately:
+// maxClockSkewFuture rejects a clock running ahead (a reading can't be from the
+// future), while maxBackfill bounds how old a reading may be. The latter still
+// admits legitimate offline-buffer replay on reconnect; anything older is pruned
+// by the db_optimizer retention window anyway, so accepting it is wasted work.
+const (
+	maxClockSkewFuture = 24 * time.Hour
+	maxBackfill        = 7 * 24 * time.Hour
+)
 
 // Publisher receives accepted readings for best-effort realtime fan-out.
 // (The in-memory hub satisfies this.)
@@ -94,7 +98,8 @@ func (s *Service) toReading(deviceID int64, msg *ingestv1.Reading) (model.Readin
 		return model.Reading{}, false
 	}
 	observed := ts.AsTime().UTC()
-	if observed.Before(minObserved) || observed.After(s.now().Add(maxClockSkewFuture)) {
+	now := s.now()
+	if observed.After(now.Add(maxClockSkewFuture)) || observed.Before(now.Add(-maxBackfill)) {
 		return model.Reading{}, false
 	}
 	return model.Reading{

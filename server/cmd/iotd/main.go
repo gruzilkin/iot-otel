@@ -45,7 +45,6 @@ func (a authorizer) Authorize(ctx context.Context, deviceID int64) (bool, error)
 }
 
 const (
-	tokenCacheTTL    = 30 * time.Second
 	gracefulStopWait = 5 * time.Second
 	shutdownWait     = 10 * time.Second
 )
@@ -69,7 +68,7 @@ func run(log *slog.Logger) error {
 
 	h := hub.New()
 	writer := storage.NewBatchWriter(pool, cfg.BatchMaxSize, cfg.BatchQueueCap, cfg.BatchMaxLatency, log)
-	tokens := auth.NewTokenStore(pool, tokenCacheTTL)
+	tokens := auth.NewTokenStore(pool)
 
 	if metrics.Enabled() {
 		mp, err := metrics.NewMeterProvider(context.Background())
@@ -96,7 +95,7 @@ func run(log *slog.Logger) error {
 	grpcServer := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamAuthInterceptor(tokens)))
 	ingestv1.RegisterIngestServiceServer(grpcServer, ingest.NewService(writer, h, log))
 
-	sessions := auth.NewSessionManager(pool)
+	sessions := auth.NewSessionManager()
 	var provider auth.Provider
 	if cfg.OAuthClientID != "" {
 		provider = auth.NewGitHubProvider(cfg.OAuthClientID, cfg.OAuthClientSecret, cfg.OAuthRedirectURL)

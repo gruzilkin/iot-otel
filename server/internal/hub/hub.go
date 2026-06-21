@@ -16,7 +16,6 @@ const defaultBuffer = 128
 
 type Subscription struct {
 	ch      chan model.Reading
-	id      uint64
 	device  int64
 	all     bool
 	dropped atomic.Uint64
@@ -31,9 +30,8 @@ func (s *Subscription) Dropped() uint64 { return s.dropped.Load() }
 
 type Hub struct {
 	mu      sync.RWMutex
-	subs    map[int64]map[uint64]*Subscription // per-device subscribers
-	all     map[uint64]*Subscription           // all-device subscribers (e.g. metrics)
-	nextID  atomic.Uint64
+	subs    map[int64]map[*Subscription]struct{} // per-device subscribers
+	all     map[*Subscription]struct{}           // all-device subscribers (e.g. metrics)
 	buffer  int
 	dropped atomic.Uint64 // hub-wide dropped readings (slow consumers)
 }
@@ -42,32 +40,32 @@ func New() *Hub { return NewWithBuffer(defaultBuffer) }
 
 func NewWithBuffer(buffer int) *Hub {
 	return &Hub{
-		subs:   make(map[int64]map[uint64]*Subscription),
-		all:    make(map[uint64]*Subscription),
+		subs:   make(map[int64]map[*Subscription]struct{}),
+		all:    make(map[*Subscription]struct{}),
 		buffer: buffer,
 	}
 }
 
 func (h *Hub) Subscribe(device int64) *Subscription {
-	s := &Subscription{ch: make(chan model.Reading, h.buffer), id: h.nextID.Add(1), device: device}
+	s := &Subscription{ch: make(chan model.Reading, h.buffer), device: device}
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	m := h.subs[device]
 	if m == nil {
-		m = make(map[uint64]*Subscription)
+		m = make(map[*Subscription]struct{})
 		h.subs[device] = m
 	}
-	m[s.id] = s
-	h.mu.Unlock()
+	m[s] = struct{}{}
 	return s
 }
 
 // SubscribeAll subscribes to readings from every device (used by the metrics
 // aggregator). It uses a larger buffer since it sees all device traffic.
 func (h *Hub) SubscribeAll() *Subscription {
-	s := &Subscription{ch: make(chan model.Reading, h.buffer*4), id: h.nextID.Add(1), all: true}
+	s := &Subscription{ch: make(chan model.Reading, h.buffer*4), all: true}
 	h.mu.Lock()
-	h.all[s.id] = s
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	h.all[s] = struct{}{}
 	return s
 }
 
@@ -78,8 +76,8 @@ func (h *Hub) Unsubscribe(s *Subscription) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if s.all {
-		if _, ok := h.all[s.id]; ok {
-			delete(h.all, s.id)
+		if _, ok := h.all[s]; ok {
+			delete(h.all, s)
 			close(s.ch)
 		}
 		return
@@ -88,8 +86,8 @@ func (h *Hub) Unsubscribe(s *Subscription) {
 	if m == nil {
 		return
 	}
-	if _, ok := m[s.id]; ok {
-		delete(m, s.id)
+	if _, ok := m[s]; ok {
+		delete(m, s)
 		close(s.ch)
 	}
 	if len(m) == 0 {
@@ -100,10 +98,10 @@ func (h *Hub) Unsubscribe(s *Subscription) {
 func (h *Hub) Publish(r model.Reading) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	for _, s := range h.subs[r.DeviceID] {
+	for s := range h.subs[r.DeviceID] {
 		h.send(s, r)
 	}
-	for _, s := range h.all {
+	for s := range h.all {
 		h.send(s, r)
 	}
 }
