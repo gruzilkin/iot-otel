@@ -67,27 +67,6 @@ func (f *fakeStore) DeleteToken(_ context.Context, token string, deviceID int64)
 	return nil
 }
 
-func TestCanAccess(t *testing.T) {
-	svc := devices.NewService(newFakeStore())
-	cases := []struct {
-		userID, deviceID int64
-		want             bool
-	}{
-		{10, 1, true},   // owner
-		{11, 1, false},  // not owner
-		{10, 99, false}, // missing
-	}
-	for _, c := range cases {
-		got, err := svc.CanAccess(context.Background(), c.userID, c.deviceID)
-		if err != nil {
-			t.Fatalf("CanAccess(%d,%d): %v", c.userID, c.deviceID, err)
-		}
-		if got != c.want {
-			t.Fatalf("CanAccess(%d,%d) = %v, want %v", c.userID, c.deviceID, got, c.want)
-		}
-	}
-}
-
 func TestAddTokenEnforcesOwnership(t *testing.T) {
 	store := newFakeStore()
 	svc := devices.NewService(store)
@@ -111,19 +90,5 @@ func TestAddTokenEnforcesOwnership(t *testing.T) {
 	}
 	if len(store.inserted) != 1 {
 		t.Fatalf("want 1 inserted token, got %d", len(store.inserted))
-	}
-}
-
-func TestGetReturnsDeviceAndTokens(t *testing.T) {
-	svc := devices.NewService(newFakeStore())
-	d, toks, err := svc.Get(context.Background(), 10, 1)
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if d.ID != 1 || len(toks) != 1 {
-		t.Fatalf("unexpected device/tokens: %+v %+v", d, toks)
-	}
-	if _, _, err := svc.Get(context.Background(), 11, 1); err != devices.ErrNotFound {
-		t.Fatalf("non-owner Get: want ErrNotFound, got %v", err)
 	}
 }

@@ -35,9 +35,10 @@ is lost on crash (accepted trade-off — Postgres is the source of truth).
 | Path | What |
 |---|---|
 | `server/cmd/iotd` | the server binary (gRPC + HTTP) |
-| `server/api/proto`, `server/api/gen` | gRPC contract + generated Go stubs |
+| `proto/` | gRPC contract (single source of truth; `buf.yaml`/`buf.gen.yaml` at repo root) |
+| `server/api/gen` | generated Go stubs (committed; regenerate with `buf generate`) |
 | `server/internal/{config,storage,auth,ingest,hub,sensors,charts,devices,realtime,metrics,web}` | server packages |
-| `device/` | Python device client + simulator (gRPC stubs committed) |
+| `device/` | Python device client + simulator (gRPC stubs generated, not committed) |
 | `db_optimizer/` | Python downsampling/retention worker (reused unchanged) |
 | `db/*.sql` | schema + dev seed + sessions table |
 
@@ -62,13 +63,22 @@ go build ./...
 go test ./...        # unit + in-process gRPC e2e + httptest handlers (no Docker)
 ```
 
-Regenerate stubs after editing the proto (`buf` + `protoc-gen-go*` on PATH):
+The contract lives in `proto/` and is the single source of truth for both services.
 
-```sh
-(cd server && buf generate)                                           # Go
-device/.venv/bin/python -m grpc_tools.protoc -I server/api/proto/ingest/v1 \
-  --python_out=device/src --grpc_python_out=device/src ingest.proto   # Python
-```
+- **Go** stubs (`server/api/gen`) are committed — Go has no build-time codegen hook,
+  so `go build`/`go test` work on a fresh checkout. After editing the proto, regenerate
+  (`buf` + `protoc-gen-go*` on PATH) and commit the result:
+
+  ```sh
+  buf generate            # run from repo root
+  ```
+
+- **Device** stubs are generated, not committed: the image builds them at `docker build`
+  time (see `device/Dockerfile`). For local dev (running `src/sim.py` from `.venv`):
+
+  ```sh
+  device/gen-proto.sh
+  ```
 
 ## Run
 

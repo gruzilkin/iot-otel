@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -96,10 +97,13 @@ func run(log *slog.Logger) error {
 	ingestv1.RegisterIngestServiceServer(grpcServer, ingest.NewService(writer, h, log))
 
 	sessions := auth.NewSessionManager()
-	var provider auth.Provider
-	if cfg.OAuthClientID != "" {
-		provider = auth.NewGitHubProvider(cfg.OAuthClientID, cfg.OAuthClientSecret, cfg.OAuthRedirectURL)
+	// GitHub OAuth is the only login path, so it is required: without it the web
+	// tier has no way to authenticate. Fail fast rather than booting a server
+	// that silently 501s every login attempt.
+	if cfg.OAuthClientID == "" || cfg.OAuthClientSecret == "" {
+		return fmt.Errorf("OAUTH_GITHUB_CLIENT_ID and OAUTH_GITHUB_CLIENT_SECRET are required")
 	}
+	provider := auth.NewGitHubProvider(cfg.OAuthClientID, cfg.OAuthClientSecret, cfg.OAuthRedirectURL)
 	authH := auth.New(sessions, provider, log)
 
 	deviceSvc := devices.NewService(devices.NewRepo(pool))

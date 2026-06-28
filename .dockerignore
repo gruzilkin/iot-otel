@@ -1,0 +1,15 @@
+# The device image builds from the repo root (docker-compose.device.yml) so it can
+# reach proto/. Keep the build context small: only device/ and proto/ are needed.
+.git
+.github
+.vscode
+**/.venv
+**/__pycache__
+**/*.pyc
+.env
+.env.*
+server
+db
+db_optimizer
+*.md
+docker-compose*.yml

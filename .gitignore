@@ -221,3 +221,10 @@ __marimo__/
 /server/iotd
 *.test
 *.out
+
+# Generated gRPC stubs (regenerated at image-build time and via device/gen-proto.sh
+# for local dev; the single source of truth is proto/). Go stubs under
+# server/api/gen ARE committed (Go has no build-time codegen hook): regenerate with
+# `buf generate` and commit after editing the proto.
+/device/src/ingest_pb2.py
+/device/src/ingest_pb2_grpc.py

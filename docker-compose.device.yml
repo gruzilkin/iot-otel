@@ -2,7 +2,11 @@
 # Set TARGET (host:port) and BEARER (a device token from the web UI).
 services:
   device:
-    build: ./device
+    # Build context is the repo root so the Dockerfile can compile the top-level
+    # proto (proto/) into Python stubs at build time.
+    build:
+      context: .
+      dockerfile: device/Dockerfile
     environment:
       TARGET: ${TARGET}
       BEARER: ${BEARER}
