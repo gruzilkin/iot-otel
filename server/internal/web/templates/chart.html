@@ -87,25 +87,21 @@ function updateKpi(name, value) {
   el.textContent = text + units[name];
 }
 
-let ws;
-function openWS() {
-  const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  ws = new WebSocket(proto + location.host + location.pathname + '/realtime');
-  ws.onmessage = e => {
-    if (e.data === 'pong') return;
-    const m = JSON.parse(e.data);
-    for (const k of SENSORS) {
-      if (m[k] !== undefined) { chartData[k].push([m.receivedAt, m[k]]); updateKpi(k, m[k]); }
-    }
-    renderChart();
-  };
-  ws.onclose = () => setTimeout(() => { openWS(); fetchUpdates(); }, 5000);
-}
-openWS();
-setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 30000);
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && (!ws || ws.readyState !== WebSocket.OPEN)) openWS();
-});
+// SSE stream of live readings. EventSource auto-reconnects (and handles
+// backgrounded tabs) on its own, so there is no manual reconnect/keepalive.
+let firstConnect = true;
+const es = new EventSource(location.pathname + '/realtime');
+es.onmessage = e => {
+  const m = JSON.parse(e.data);
+  for (const k of SENSORS) {
+    if (m[k] !== undefined) { chartData[k].push([m.receivedAt, m[k]]); updateKpi(k, m[k]); }
+  }
+  renderChart();
+};
+es.onopen = () => {
+  if (firstConnect) { firstConnect = false; return; } // page already rendered {{.Data}}
+  fetchUpdates(); // backfill the gap after an auto-reconnect
+};
 window.addEventListener('resize', () => chart.resize());
 </script>
 </body>

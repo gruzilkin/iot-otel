@@ -1,6 +1,6 @@
 // Package hub is the in-memory pub/sub that replaces RabbitMQ's realtime
 // fan-out. Readings are published per device id; subscribers (browser
-// WebSocket sessions, the metrics aggregator) each get a buffered channel.
+// SSE sessions, the metrics aggregator) each get a buffered channel.
 // Publish never blocks: a slow subscriber drops readings rather than stalling
 // ingest or other subscribers.
 package hub
@@ -17,12 +17,11 @@ const defaultBuffer = 128
 type Subscription struct {
 	ch      chan model.Reading
 	device  int64
-	all     bool
 	dropped atomic.Uint64
 }
 
-// C is the channel of readings for this subscription. It is closed on
-// Unsubscribe.
+// C is the channel of readings for this subscription. It is closed by the
+// cleanup func returned by Subscribe.
 func (s *Subscription) C() <-chan model.Reading { return s.ch }
 
 // Dropped reports how many readings were dropped because the buffer was full.
@@ -46,7 +45,12 @@ func NewWithBuffer(buffer int) *Hub {
 	}
 }
 
-func (h *Hub) Subscribe(device int64) *Subscription {
+// Subscribe registers a subscriber for one device's readings. It returns the
+// subscription and a cleanup func that removes it and closes its channel. The
+// caller must call cleanup when done (typically via defer); otherwise the
+// subscription leaks and Publish keeps fanning out to a channel no one reads.
+// cleanup is safe to call more than once.
+func (h *Hub) Subscribe(device int64) (*Subscription, func()) {
 	s := &Subscription{ch: make(chan model.Reading, h.buffer), device: device}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -56,32 +60,28 @@ func (h *Hub) Subscribe(device int64) *Subscription {
 		h.subs[device] = m
 	}
 	m[s] = struct{}{}
-	return s
+	return s, func() { h.unsubscribe(s) }
 }
 
 // SubscribeAll subscribes to readings from every device (used by the metrics
-// aggregator). It uses a larger buffer since it sees all device traffic.
+// aggregator). It uses a larger buffer since it sees all device traffic. Unlike
+// Subscribe it returns no cleanup func: the aggregator lives for the process
+// lifetime, so an all-subscription is never individually removed.
 func (h *Hub) SubscribeAll() *Subscription {
-	s := &Subscription{ch: make(chan model.Reading, h.buffer*4), all: true}
+	s := &Subscription{ch: make(chan model.Reading, h.buffer*4)}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.all[s] = struct{}{}
 	return s
 }
 
-// Unsubscribe removes the subscription and closes its channel. Closing happens
-// under the write lock, so no Publish (which holds the read lock) can be
-// mid-send on a closed channel.
-func (h *Hub) Unsubscribe(s *Subscription) {
+// unsubscribe removes a device subscription and closes its channel; it is the
+// cleanup func returned by Subscribe. Closing happens under the write lock, so
+// no Publish (which holds the read lock) can be mid-send on a closed channel.
+// Calling it again after the subscription is gone is a no-op.
+func (h *Hub) unsubscribe(s *Subscription) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if s.all {
-		if _, ok := h.all[s]; ok {
-			delete(h.all, s)
-			close(s.ch)
-		}
-		return
-	}
 	m := h.subs[s.device]
 	if m == nil {
 		return

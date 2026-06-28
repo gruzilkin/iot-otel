@@ -1,5 +1,5 @@
 // Command iotd is the single IoT backend binary: it serves the gRPC ingestion
-// API (devices) and the HTTP/WebSocket API (browsers), bridged by an in-memory
+// API (devices) and the HTTP API (browsers, incl. an SSE realtime stream), bridged by an in-memory
 // hub. The web UI, auth, and metrics arrive in later phases.
 package main
 
@@ -110,7 +110,7 @@ func run(log *slog.Logger) error {
 	authz := authorizer{auth: authH, devices: deviceSvc}
 
 	chartsHandler := charts.NewHandler(sensors.NewService(sensors.NewPgxRepo(pool)), authz, log)
-	realtimeHandler := realtime.NewHandler(h, authz, cfg.WSAllowedOrigins, log)
+	realtimeHandler := realtime.NewHandler(h, authz, log)
 	devicesHandler := devices.NewHandler(deviceSvc, authH, authH.CSRFToken, log)
 
 	mux := http.NewServeMux()

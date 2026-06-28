@@ -19,7 +19,7 @@ Pi device (Python: Adafruit SCD30/SGP40 + device-side timestamps)
    ▼
 ┌──────────────── iotd (single Go binary) ────────────────┐
 │ gRPC ingest ─► auth interceptor ─► batch writer ─► Postgres
-│      └─► in-memory hub ─┬─► browser WebSocket (/charts/{id}/realtime)
+│      └─► in-memory hub ─┬─► browser SSE stream (/charts/{id}/realtime)
 │                         └─► OTel aggregator ─► OTLP (metrics)
 │ HTTP: OAuth2 + sessions; charts (ECharts) + /partial; devices HTMX CRUD
 └──────────────────────────────────────────────────────────┘
@@ -52,7 +52,6 @@ See `.env.example`. Key variables:
 | `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` | localhost/5432/user/secret/fileserver | DB (or set `DATABASE_URL`) |
 | `BATCH_MAX_SIZE` / `BATCH_MAX_LATENCY` / `BATCH_QUEUE_CAP` | 500 / 500ms / 4096 | write batching + backpressure |
 | `OAUTH_GITHUB_CLIENT_ID` / `_SECRET` / `OAUTH_REDIRECT_URL` | — | GitHub login |
-| `WS_ALLOWED_ORIGINS` | same-origin | comma-separated WebSocket origins |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` + standard `OTEL_*` | unset = metrics off | metrics destination |
 
 ## Build & test
@@ -110,6 +109,6 @@ TARGET=localhost:50051 BEARER=<token> device/.venv/bin/python device/src/sim.py
   device timestamps and ascending ids; `db_optimizer` populates
   `sensor_data_weights`.
 - Web path verified: authed `/devices`, `/charts/{id}` + `/partial` (ownership
-  enforced; 401 without a session), realtime WebSocket, static assets.
+  enforced; 401 without a session), realtime SSE stream, static assets.
 - Metrics: enable by pointing `OTEL_EXPORTER_OTLP_ENDPOINT` at a collector /
   Grafana Alloy / Grafana Cloud; `sensor.*` and `iot.*` series will appear.

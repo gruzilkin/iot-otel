@@ -4,7 +4,6 @@ go 1.26.4
 
 require (
 	github.com/alexedwards/scs/v2 v2.9.0
-	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0

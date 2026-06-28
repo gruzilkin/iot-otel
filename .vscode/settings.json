@@ -1,0 +1,16 @@
+{
+  // Run/debug Go tests with the `integration` build tag, so files guarded by
+  // `//go:build integration` (e.g. server/internal/devices/integration_test.go)
+  // are compiled and their tests appear in the Test Explorer / codelens.
+  "go.testTags": "integration",
+
+  // The first integration run pulls postgres:16-alpine and boots a container;
+  // the default 30s test timeout is too tight for that.
+  "go.testTimeout": "120s",
+
+  // Let gopls include the tagged files in analysis so they aren't greyed out as
+  // "excluded from build" and you get completion + the run/debug codelens on them.
+  "gopls": {
+    "build.buildFlags": ["-tags=integration"]
+  }
+}

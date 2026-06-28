@@ -5,18 +5,16 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
 type Config struct {
-	GRPCAddr         string
-	HTTPAddr         string
-	DatabaseURL      string
-	BatchMaxSize     int
-	BatchMaxLatency  time.Duration
-	BatchQueueCap    int
-	WSAllowedOrigins []string
+	GRPCAddr        string
+	HTTPAddr        string
+	DatabaseURL     string
+	BatchMaxSize    int
+	BatchMaxLatency time.Duration
+	BatchQueueCap   int
 
 	OAuthClientID     string
 	OAuthClientSecret string
@@ -25,13 +23,12 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		GRPCAddr:         env("GRPC_ADDR", ":50051"),
-		HTTPAddr:         env("HTTP_ADDR", ":8080"),
-		DatabaseURL:      databaseURL(),
-		BatchMaxSize:     envInt("BATCH_MAX_SIZE", 500),
-		BatchMaxLatency:  envDuration("BATCH_MAX_LATENCY", 500*time.Millisecond),
-		BatchQueueCap:    envInt("BATCH_QUEUE_CAP", 4096),
-		WSAllowedOrigins: envList("WS_ALLOWED_ORIGINS"),
+		GRPCAddr:        env("GRPC_ADDR", ":50051"),
+		HTTPAddr:        env("HTTP_ADDR", ":8080"),
+		DatabaseURL:     databaseURL(),
+		BatchMaxSize:    envInt("BATCH_MAX_SIZE", 500),
+		BatchMaxLatency: envDuration("BATCH_MAX_LATENCY", 500*time.Millisecond),
+		BatchQueueCap:   envInt("BATCH_QUEUE_CAP", 4096),
 
 		OAuthClientID:     os.Getenv("OAUTH_GITHUB_CLIENT_ID"),
 		OAuthClientSecret: os.Getenv("OAUTH_GITHUB_CLIENT_SECRET"),
@@ -69,23 +66,6 @@ func envInt(key string, def int) int {
 		}
 	}
 	return def
-}
-
-// envList splits a comma-separated env var; empty yields nil (same-origin only
-// for WebSocket origin checks).
-func envList(key string) []string {
-	v := os.Getenv(key)
-	if v == "" {
-		return nil
-	}
-	parts := strings.Split(v, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 func envDuration(key string, def time.Duration) time.Duration {

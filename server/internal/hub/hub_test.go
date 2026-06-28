@@ -13,8 +13,8 @@ func reading(device int64, name string) model.Reading {
 
 func TestPublishDeliversToDeviceSubscribers(t *testing.T) {
 	h := New()
-	sub := h.Subscribe(1)
-	defer h.Unsubscribe(sub)
+	sub, unsubscribe := h.Subscribe(1)
+	defer unsubscribe()
 
 	h.Publish(reading(1, "temperature"))
 	select {
@@ -29,8 +29,8 @@ func TestPublishDeliversToDeviceSubscribers(t *testing.T) {
 
 func TestPublishIsolatedByDevice(t *testing.T) {
 	h := New()
-	sub := h.Subscribe(1)
-	defer h.Unsubscribe(sub)
+	sub, unsubscribe := h.Subscribe(1)
+	defer unsubscribe()
 
 	h.Publish(reading(2, "temperature")) // different device
 	select {
@@ -42,8 +42,8 @@ func TestPublishIsolatedByDevice(t *testing.T) {
 
 func TestPublishDropsWhenFull(t *testing.T) {
 	h := NewWithBuffer(1)
-	sub := h.Subscribe(1)
-	defer h.Unsubscribe(sub)
+	sub, unsubscribe := h.Subscribe(1)
+	defer unsubscribe()
 
 	for i := 0; i < 5; i++ {
 		h.Publish(reading(1, "ppm")) // never blocks
@@ -55,13 +55,13 @@ func TestPublishDropsWhenFull(t *testing.T) {
 
 func TestUnsubscribeClosesChannel(t *testing.T) {
 	h := New()
-	sub := h.Subscribe(1)
+	sub, unsubscribe := h.Subscribe(1)
 	if h.SubscriberCount(1) != 1 {
 		t.Fatalf("want 1 subscriber, got %d", h.SubscriberCount(1))
 	}
-	h.Unsubscribe(sub)
+	unsubscribe()
 	if _, ok := <-sub.C(); ok {
-		t.Fatal("channel should be closed after Unsubscribe")
+		t.Fatal("channel should be closed after unsubscribe")
 	}
 	if h.SubscriberCount(1) != 0 {
 		t.Fatalf("want 0 subscribers, got %d", h.SubscriberCount(1))
