@@ -134,3 +134,37 @@ func TestCSRF(t *testing.T) {
 		t.Fatalf("valid-token POST: want 204, got %d", resp2.StatusCode)
 	}
 }
+
+func TestCSRFFormField(t *testing.T) {
+	srv, c := newServer(t)
+
+	// Seed the session cookie and obtain the token.
+	tokenResp, err := c.Get(srv.URL + "/csrf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenBytes, _ := io.ReadAll(tokenResp.Body)
+	tokenResp.Body.Close()
+	token := string(tokenBytes)
+
+	// A plain form post carrying the token in a csrf_token field (as the logout
+	// form does) must be accepted even without the X-CSRF-Token header.
+	resp, err := c.PostForm(srv.URL+"/mutate", url.Values{"csrf_token": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("form-field CSRF POST: want 204, got %d", resp.StatusCode)
+	}
+
+	// A wrong form-field token is still rejected.
+	resp, err = c.PostForm(srv.URL+"/mutate", url.Values{"csrf_token": {"wrong"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("bad form-field CSRF POST: want 403, got %d", resp.StatusCode)
+	}
+}

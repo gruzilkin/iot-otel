@@ -115,8 +115,8 @@ func (a *Auth) CSRFToken(ctx context.Context) string {
 	return t
 }
 
-// RequireCSRF rejects mutating requests whose X-CSRF-Token header does not match
-// the session token. Safe methods pass through.
+// RequireCSRF rejects mutating requests whose CSRF token does not match the
+// session token. Safe methods pass through.
 func (a *Auth) RequireCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -125,12 +125,24 @@ func (a *Auth) RequireCSRF(next http.Handler) http.Handler {
 			return
 		}
 		want := a.sessions.GetString(r.Context(), sessionCSRFKey)
-		if want == "" || r.Header.Get("X-CSRF-Token") != want {
+		if want == "" || !csrfTokenMatches(r, want) {
 			http.Error(w, "invalid csrf token", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// csrfTokenMatches accepts the session CSRF token from either the X-CSRF-Token
+// header (HTMX sends it via htmx:configRequest) or a csrf_token form field
+// (plain, non-HTMX form posts such as logout, which need a full-page redirect
+// that HTMX's 302 handling would swallow). The header is checked first so HTMX
+// requests never have their body parsed here.
+func csrfTokenMatches(r *http.Request, want string) bool {
+	if r.Header.Get("X-CSRF-Token") == want {
+		return true
+	}
+	return r.PostFormValue("csrf_token") == want
 }
 
 func randomToken() string {
