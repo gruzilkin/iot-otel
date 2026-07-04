@@ -14,11 +14,10 @@ Env:
 import asyncio
 import os
 
-import board
-import busio
 import adafruit_scd30
 import adafruit_sgp40
 import grpc
+from adafruit_extended_bus import ExtendedI2C
 from google.protobuf.timestamp_pb2 import Timestamp
 
 import ingest_pb2
@@ -29,7 +28,11 @@ import ingest_pb2_grpc
 QUEUE_MAX = 1000
 RECONNECT_DELAY = 5
 
-i2c = busio.I2C(board.SCL, board.SDA, frequency=50000)
+# Open the Linux I2C device directly. Using board.SCL/board.SDA makes Blinka
+# perform GPIO board detection, which is unreliable inside a container even when
+# /dev/i2c-1 is correctly mapped. Linux controls the bus frequency; the frequency
+# argument accepted by CircuitPython busio is not settable through this backend.
+i2c = ExtendedI2C(1)
 scd = adafruit_scd30.SCD30(i2c)
 sgp = adafruit_sgp40.SGP40(i2c)
 

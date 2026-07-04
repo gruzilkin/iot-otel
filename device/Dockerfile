@@ -15,7 +15,9 @@ RUN python3 -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. ingest.
 FROM python:3.12-slim
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y gcc i2c-tools && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends i2c-tools \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY device/requirements.stable.txt requirements.stable.txt
 RUN pip3 install -r requirements.stable.txt

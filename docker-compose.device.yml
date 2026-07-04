@@ -17,3 +17,8 @@ services:
     devices:
       - /dev/i2c-1:/dev/i2c-1
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
