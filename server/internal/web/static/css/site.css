@@ -9,3 +9,5 @@ body { font-family: sans-serif; margin: 1rem; }
 #voc { color: orange; }
 #humidity { color: lightblue; }
 #temperature { color: green; }
+#pressure { color: mediumpurple; }
+#vibration { color: magenta; }

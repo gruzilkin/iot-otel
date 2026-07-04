@@ -22,6 +22,8 @@ var allowedSensors = map[string]struct{}{
 	"humidity":    {},
 	"voc":         {},
 	"ppm":         {},
+	"pressure":    {},
+	"vibration":   {},
 }
 
 // Timestamps are device-side, so guard the two failure modes separately:

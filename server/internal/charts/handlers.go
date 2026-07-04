@@ -15,7 +15,7 @@ import (
 )
 
 // SensorNames is the fixed set of series the chart renders.
-var SensorNames = []string{"temperature", "humidity", "voc", "ppm"}
+var SensorNames = []string{"temperature", "humidity", "voc", "ppm", "pressure", "vibration"}
 
 const defaultLimit = 1000
 

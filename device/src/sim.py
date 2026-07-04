@@ -28,6 +28,9 @@ async def readings(rate):
         yield ingest_pb2.Reading(sensor_name="humidity", value=round(45 + 5 * math.sin(t / 7), 3), observed_at=now_timestamp())
         yield ingest_pb2.Reading(sensor_name="ppm", value=float(600 + random.randint(0, 200)), observed_at=now_timestamp())
         yield ingest_pb2.Reading(sensor_name="voc", value=float(random.randint(10, 80)), observed_at=now_timestamp())
+        yield ingest_pb2.Reading(sensor_name="pressure", value=round(1013 + 3 * math.sin(t / 20), 3), observed_at=now_timestamp())
+        # vibration rests at ~0 with an occasional synthetic spike, mimicking the device.
+        yield ingest_pb2.Reading(sensor_name="vibration", value=round(random.uniform(5, 15), 3) if random.random() < 0.1 else 0.0, observed_at=now_timestamp())
         t += 1
         await asyncio.sleep(rate)
 

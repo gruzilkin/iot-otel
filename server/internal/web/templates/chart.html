@@ -13,10 +13,12 @@
   <div class="item" id="humidity">– %</div>
   <div class="item" id="ppm">– ppm</div>
   <div class="item" id="voc">– voc</div>
+  <div class="item" id="pressure">– hPa</div>
+  <div class="item" id="vibration">– m/s²</div>
 </div>
 <div id="chart" class="chart"></div>
 <script>
-const SENSORS = ['temperature', 'humidity', 'ppm', 'voc'];
+const SENSORS = ['temperature', 'humidity', 'ppm', 'voc', 'pressure', 'vibration'];
 const chartData = {{.Data}};
 for (const k of SENSORS) chartData[k] = chartData[k] || [];
 
@@ -33,6 +35,8 @@ chart.setOption({
     { type: 'value', name: '%', position: 'left', offset: 60 },
     { type: 'value', name: 'ppm', position: 'right' },
     { type: 'value', name: 'voc', position: 'right', offset: 60 },
+    { type: 'value', name: 'hPa', position: 'left', offset: 120 },
+    { type: 'value', name: 'm/s²', position: 'right', offset: 120 },
   ],
   dataZoom: [{ type: 'inside' }, { type: 'slider' }],
   series: [
@@ -40,6 +44,8 @@ chart.setOption({
     { name: 'humidity', type: 'line', showSymbol: false, yAxisIndex: 1, data: chartData.humidity },
     { name: 'ppm', type: 'line', showSymbol: false, yAxisIndex: 2, data: chartData.ppm },
     { name: 'voc', type: 'line', showSymbol: false, yAxisIndex: 3, data: chartData.voc },
+    { name: 'pressure', type: 'line', showSymbol: false, yAxisIndex: 4, data: chartData.pressure },
+    { name: 'vibration', type: 'line', showSymbol: false, yAxisIndex: 5, data: chartData.vibration },
   ],
 });
 
@@ -82,7 +88,7 @@ chart.on('datazoom', () => {
   scheduleFetch(dz.startValue, dz.endValue);
 });
 
-const units = { temperature: ' C', humidity: ' %', ppm: ' ppm', voc: '' };
+const units = { temperature: ' C', humidity: ' %', ppm: ' ppm', voc: '', pressure: ' hPa', vibration: ' m/s²' };
 function updateKpi(name, value) {
   const el = document.getElementById(name);
   if (!el) return;
