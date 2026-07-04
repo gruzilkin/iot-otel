@@ -24,10 +24,6 @@ document.addEventListener('htmx:configRequest', function (e) {
   </div>
   <div id="content"></div>
 </div>
-<form method="post" action="/logout">
-  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-  <button type="submit">Logout</button>
-</form>
 </body>
 </html>{{end}}
 

@@ -139,7 +139,6 @@ func run(log *slog.Logger) error {
 	// Auth endpoints (no session required).
 	mux.HandleFunc("GET /login", authH.Login)
 	mux.HandleFunc("GET /oauth2/callback", authH.Callback)
-	mux.HandleFunc("POST /logout", authH.Logout)
 
 	// Static assets (public).
 	mux.Handle("GET /css/", web.StaticHandler())
