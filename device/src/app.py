@@ -96,7 +96,7 @@ async def read_lps22(queue):
 # movement we switch to ACTIVE_HZ and stream every sample. We fall back to idle only
 # after staying active >= MIN_ACTIVE_S AND being quiet for >= QUIET_S (whichever is
 # longer).
-MOVE_THRESHOLD = 1.5  # m/s^2 deviation from rest that counts as movement
+MOVE_THRESHOLD = 0.1  # m/s^2 deviation from rest that counts as movement (ambient noise sits < 0.05)
 IDLE_HZ = 10
 ACTIVE_HZ = 100
 MIN_ACTIVE_S = 1.0
