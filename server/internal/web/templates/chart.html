@@ -30,14 +30,17 @@ chart.setOption({
   tooltip: { trigger: 'axis' },
   legend: { data: SENSORS },
   xAxis: { type: 'time' },
+  // scale: don't force zero into the range (pressure sits ~1013, not near 0);
+  // boundaryGap: pad the data extent by 10% each side. With dataZoom's default
+  // filterMode, each axis rescales to the data actually visible in the window.
   yAxis: [
-    { type: 'value', name: 'C', position: 'left' },
-    { type: 'value', name: '%', position: 'left', offset: 60 },
-    { type: 'value', name: 'ppm', position: 'right' },
-    { type: 'value', name: 'voc', position: 'right', offset: 60 },
-    { type: 'value', name: 'hPa', position: 'left', offset: 120 },
-    { type: 'value', name: 'm/s²', position: 'right', offset: 120 },
-  ],
+    { name: 'C', position: 'left' },
+    { name: '%', position: 'left', offset: 60 },
+    { name: 'ppm', position: 'right' },
+    { name: 'voc', position: 'right', offset: 60 },
+    { name: 'hPa', position: 'left', offset: 120 },
+    { name: 'm/s²', position: 'right', offset: 120 },
+  ].map(a => ({ type: 'value', scale: true, boundaryGap: ['10%', '10%'], ...a })),
   dataZoom: [{ type: 'inside' }, { type: 'slider' }],
   series: [
     { name: 'temperature', type: 'line', showSymbol: false, yAxisIndex: 0, data: chartData.temperature },
@@ -49,11 +52,35 @@ chart.setOption({
   ],
 });
 
+// Keep a zoomed-in middle view anchored in time. ECharts stores the zoom window
+// as percentages, so appended data would otherwise slide the view. We only let it
+// auto-follow when the window's right edge is parked at the freshest sample.
+const TAIL_EPS_MS = 2000;
+let followTail = true;
+let zoomWindow = null; // { start, end } absolute ms, set only while parked in the middle
+
+function latestTime() {
+  let max = null;
+  for (const k of SENSORS) {
+    const arr = chartData[k];
+    if (arr && arr.length) {
+      const t = arr[arr.length - 1][0];
+      if (max === null || t > max) max = t;
+    }
+  }
+  return max;
+}
+
 let renderTask;
 function renderChart() {
   clearTimeout(renderTask);
   renderTask = setTimeout(() => {
-    chart.setOption({ series: SENSORS.map(k => ({ data: chartData[k] })) });
+    const opt = { series: SENSORS.map(k => ({ data: chartData[k] })) };
+    // Re-pin the absolute window so newly appended data can't scroll a middle view.
+    if (!followTail && zoomWindow) {
+      opt.dataZoom = [{ startValue: zoomWindow.start, endValue: zoomWindow.end }];
+    }
+    chart.setOption(opt);
   }, 1);
 }
 
@@ -86,6 +113,13 @@ function fetchUpdates(start, end) {
 chart.on('datazoom', () => {
   const dz = chart.getOption().dataZoom[0];
   scheduleFetch(dz.startValue, dz.endValue);
+  // Follow the tail iff the window's right edge is at (or near) the newest sample;
+  // otherwise remember the absolute window so renderChart keeps it fixed.
+  const maxT = latestTime();
+  followTail = maxT === null || dz.endValue == null || dz.endValue >= maxT - TAIL_EPS_MS;
+  zoomWindow = (!followTail && dz.startValue != null && dz.endValue != null)
+    ? { start: dz.startValue, end: dz.endValue }
+    : null;
 });
 
 const units = { temperature: ' C', humidity: ' %', ppm: ' ppm', voc: '', pressure: ' hPa', vibration: ' m/s²' };
