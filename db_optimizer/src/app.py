@@ -1,4 +1,4 @@
-import os, asyncio
+import os, asyncio, signal
 import psycopg2, psycopg2.extras
 
 import numpy as np
@@ -163,10 +163,16 @@ async def recalculate_worker():
 
 
 async def main():
+    loop = asyncio.get_running_loop()
+    coros = [calculate_tail_worker(), recalculate_worker()]
+    tasks = [asyncio.create_task(coro) for coro in coros]
+    gathered = asyncio.gather(*tasks)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, gathered.cancel)
     try:
-        coros = [calculate_tail_worker(), recalculate_worker()]
-        tasks = [asyncio.create_task(coro) for coro in coros]
-        await asyncio.gather(*tasks)
+        await gathered
+    except asyncio.CancelledError:
+        pass
     finally:
         for task in tasks:
             task.cancel()
