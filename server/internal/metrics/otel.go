@@ -29,7 +29,7 @@ func NewMeterProvider(ctx context.Context) (*sdkmetric.MeterProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK())
+	res, err := newResource(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -37,6 +37,13 @@ func NewMeterProvider(ctx context.Context) (*sdkmetric.MeterProvider, error) {
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp)),
 		sdkmetric.WithResource(res),
 	), nil
+}
+
+// newResource builds the OTel resource (service.name and friends) from the
+// standard OTEL_* environment variables, shared by the meter and logger
+// providers so their series line up in the collector.
+func newResource(ctx context.Context) (*resource.Resource, error) {
+	return resource.New(ctx, resource.WithFromEnv(), resource.WithTelemetrySDK())
 }
 
 func newExporter(ctx context.Context) (sdkmetric.Exporter, error) {

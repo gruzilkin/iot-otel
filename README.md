@@ -52,7 +52,7 @@ See `.env.example`. Key variables:
 | `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` | localhost/5432/user/secret/fileserver | DB (or set `DATABASE_URL`) |
 | `BATCH_MAX_SIZE` / `BATCH_MAX_LATENCY` / `BATCH_QUEUE_CAP` | 500 / 500ms / 4096 | write batching + backpressure |
 | `OAUTH_GITHUB_CLIENT_ID` / `_SECRET` / `OAUTH_REDIRECT_URL` | — | GitHub login |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` + standard `OTEL_*` | unset = metrics off | metrics destination |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` + standard `OTEL_*` | unset = metrics & logs off | metrics + logs destination (URL with scheme, e.g. `http://collector:4317`) |
 
 ## Build & test
 
@@ -112,3 +112,7 @@ TARGET=localhost:50051 BEARER=<token> device/.venv/bin/python device/src/sim.py
   enforced; 401 without a session), realtime SSE stream, static assets.
 - Metrics: enable by pointing `OTEL_EXPORTER_OTLP_ENDPOINT` at a collector /
   Grafana Alloy / Grafana Cloud; `sensor.*` and `iot.*` series will appear.
+- Logs: the same endpoint also exports application logs (stdlib `slog` bridged
+  via `otelslog`, still an OTel beta signal). Logs fan out to **both** stdout and
+  OTLP, so `docker logs` keeps working; when the endpoint is unset, logs stay
+  stdout-only. No trace correlation yet (the service has no tracer).

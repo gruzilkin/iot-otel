@@ -22,11 +22,13 @@ import (
 	"github.com/gruzilkin/iot-otel/server/internal/devices"
 	"github.com/gruzilkin/iot-otel/server/internal/hub"
 	"github.com/gruzilkin/iot-otel/server/internal/ingest"
+	"github.com/gruzilkin/iot-otel/server/internal/logging"
 	"github.com/gruzilkin/iot-otel/server/internal/metrics"
 	"github.com/gruzilkin/iot-otel/server/internal/realtime"
 	"github.com/gruzilkin/iot-otel/server/internal/sensors"
 	"github.com/gruzilkin/iot-otel/server/internal/storage"
 	"github.com/gruzilkin/iot-otel/server/internal/web"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"google.golang.org/grpc"
 )
 
@@ -60,6 +62,25 @@ func main() {
 
 func run(log *slog.Logger) error {
 	cfg := config.Load()
+
+	// Wire OTel log export before anything else logs: the batch writer and every
+	// handler below capture this logger, so the OTLP handler must be attached
+	// first. Logs fan out to stdout AND OTLP when enabled; stdout only otherwise.
+	if metrics.LogsEnabled() {
+		lp, err := metrics.NewLoggerProvider(context.Background())
+		if err != nil {
+			return err
+		}
+		// Registered before pool.Close below, so by LIFO it flushes last.
+		defer func() { _ = lp.Shutdown(context.Background()) }()
+		otelH := otelslog.NewHandler("github.com/gruzilkin/iot-otel/server", otelslog.WithLoggerProvider(lp))
+		log = slog.New(logging.Fanout(log.Handler(), otelH))
+		slog.SetDefault(log)
+		log.Info("OTel logs enabled")
+	} else {
+		slog.SetDefault(log)
+		log.Info("OTel logs disabled (set OTEL_EXPORTER_OTLP_ENDPOINT to enable)")
+	}
 
 	pool, err := storage.NewPool(context.Background(), cfg.DatabaseURL)
 	if err != nil {
