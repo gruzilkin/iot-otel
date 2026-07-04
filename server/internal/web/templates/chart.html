@@ -20,7 +20,10 @@ const SENSORS = ['temperature', 'humidity', 'ppm', 'voc'];
 const chartData = {{.Data}};
 for (const k of SENSORS) chartData[k] = chartData[k] || [];
 
-const chart = echarts.init(document.getElementById('chart'));
+// ECharts paints a <canvas>, so it can't inherit the CSS color-scheme; read the
+// OS preference here and use its built-in dark theme to match (picked at load).
+const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
+const chart = echarts.init(document.getElementById('chart'), prefersDark ? 'dark' : null);
 chart.setOption({
   tooltip: { trigger: 'axis' },
   legend: { data: SENSORS },
