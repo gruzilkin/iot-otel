@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -130,8 +131,13 @@ func run(log *slog.Logger) error {
 	deviceSvc := devices.NewService(devices.NewRepo(pool))
 	authz := authorizer{auth: authH, devices: deviceSvc}
 
+	// Cancelled at shutdown to release open SSE streams; without it they hold
+	// httpServer.Shutdown open until its deadline.
+	streamCtx, cancelStreams := context.WithCancel(context.Background())
+	defer cancelStreams()
+
 	chartsHandler := charts.NewHandler(sensors.NewService(sensors.NewPgxRepo(pool)), authz, log)
-	realtimeHandler := realtime.NewHandler(h, authz, log)
+	realtimeHandler := realtime.NewHandler(h, authz, streamCtx, log)
 	devicesHandler := devices.NewHandler(deviceSvc, authH, authH.CSRFToken, log)
 
 	mux := http.NewServeMux()
@@ -206,21 +212,41 @@ func run(log *slog.Logger) error {
 		log.Info("shutting down")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownWait)
-	defer cancel()
-	_ = httpServer.Shutdown(shutdownCtx)
+	// Release long-lived SSE streams first, otherwise they keep httpServer.Shutdown
+	// blocked until its deadline while browsers stay connected.
+	cancelStreams()
 
-	stopped := make(chan struct{})
+	// Close the HTTP and gRPC front doors concurrently so their grace windows
+	// overlap instead of summing (which could exceed Docker's stop grace and get
+	// us SIGKILLed before the final DB flush).
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		grpcServer.GracefulStop()
-		close(stopped)
+		defer wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownWait)
+		defer cancel()
+		_ = httpServer.Shutdown(ctx)
 	}()
-	select {
-	case <-stopped:
-	case <-time.After(gracefulStopWait):
-		log.Warn("graceful stop timed out; forcing")
-		grpcServer.Stop()
-	}
+	go func() {
+		defer wg.Done()
+		stopped := make(chan struct{})
+		go func() {
+			grpcServer.GracefulStop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+		case <-time.After(gracefulStopWait):
+			log.Warn("graceful stop timed out; forcing")
+			grpcServer.Stop()
+		}
+	}()
+	wg.Wait()
 
-	return writer.Close(shutdownCtx)
+	// Ingest is stopped, so the queue is now final. Flush it last on its own budget
+	// rather than a shutdown deadline that the HTTP/gRPC teardown may have spent —
+	// the deferred pool.Close must not tear the pool down under an in-flight flush.
+	flushCtx, cancel := context.WithTimeout(context.Background(), shutdownWait)
+	defer cancel()
+	return writer.Close(flushCtx)
 }

@@ -24,7 +24,7 @@ func (allowAuthorizer) Authorize(context.Context, int64) (bool, error) { return 
 func open(t *testing.T, h *hub.Hub, device string) *http.Response {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle("GET /charts/{deviceId}/realtime", NewHandler(h, allowAuthorizer{}, nil))
+	mux.Handle("GET /charts/{deviceId}/realtime", NewHandler(h, allowAuthorizer{}, context.Background(), nil))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 

@@ -30,14 +30,22 @@ type Authorizer interface {
 type Handler struct {
 	hub   *hub.Hub
 	authz Authorizer
-	log   *slog.Logger
+	// shutdown is cancelled when the server begins shutting down. SSE streams are
+	// long-lived, so without a server-wide signal they'd hold http.Server.Shutdown
+	// open until its timeout (Shutdown waits for handlers to return but does not
+	// cancel their request contexts).
+	shutdown context.Context
+	log      *slog.Logger
 }
 
-func NewHandler(h *hub.Hub, authz Authorizer, log *slog.Logger) *Handler {
+func NewHandler(h *hub.Hub, authz Authorizer, shutdown context.Context, log *slog.Logger) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{hub: h, authz: authz, log: log}
+	if shutdown == nil {
+		shutdown = context.Background()
+	}
+	return &Handler{hub: h, authz: authz, shutdown: shutdown, log: log}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +85,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
+		case <-h.shutdown.Done():
+			return // server is shutting down; release the stream so Shutdown can finish
 		case <-r.Context().Done():
 			return
 		case <-ping.C:
