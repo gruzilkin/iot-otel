@@ -27,6 +27,9 @@ for (const k of SENSORS) chartData[k] = chartData[k] || [];
 const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
 const chart = echarts.init(document.getElementById('chart'), prefersDark ? 'dark' : null);
 chart.setOption({
+  // Reuse the KPI colors from site.css so each line and its legend marker match the big
+  // number up top. Series are declared in SENSORS order, so this palette lines up 1:1.
+  color: SENSORS.map(k => getComputedStyle(document.getElementById(k)).color),
   tooltip: { trigger: 'axis' },
   legend: { data: SENSORS },
   xAxis: { type: 'time' },
