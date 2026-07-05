@@ -123,7 +123,7 @@ QUIET_S = 1.0  # keep streaming this long after the last over-threshold sample
 # vs false-positive knob: Chebyshev caps the quiet-state exceedance at 1/K_SIGMA^2 for
 # ANY distribution (~6% at 4, ~4% at 5); for near-Gaussian noise it is far lower. Raise
 # it if idle still trips events, lower it to catch fainter movement.
-K_SIGMA = 4.0
+K_SIGMA = 5.0
 STATS_TAU_S = 10.0  # time constant of the running noise mean/variance (steadier than baseline)
 STATS_ALPHA = (1 / SAMPLE_HZ) / STATS_TAU_S
 # Relearn the resting orientation as a time constant, not a per-sample weight, so the
