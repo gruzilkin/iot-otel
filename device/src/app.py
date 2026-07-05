@@ -116,8 +116,16 @@ async def read_lps22(queue):
 # QUIET_S of the last over-threshold sample) we stream every sample; when quiet we emit
 # only the per-second peak (~0 at rest).
 SAMPLE_HZ = 50  # one steady rate; > 2x the 15.63 Hz bandwidth, catches onset within ~20 ms
-MOVE_THRESHOLD = 0.03  # m/s^2 deviation counting as movement; ~2-3x the ~0.012 floor — TUNE on hardware
 QUIET_S = 1.0  # keep streaming this long after the last over-threshold sample
+# Adaptive trigger. Rather than a fixed cutoff, we track the running mean and standard
+# deviation of the quiet-state deviation norm and fire at mean + K_SIGMA * std, so the
+# device self-calibrates to its own noise floor and mounting. K_SIGMA is the sensitivity
+# vs false-positive knob: Chebyshev caps the quiet-state exceedance at 1/K_SIGMA^2 for
+# ANY distribution (~6% at 4, ~4% at 5); for near-Gaussian noise it is far lower. Raise
+# it if idle still trips events, lower it to catch fainter movement.
+K_SIGMA = 4.0
+STATS_TAU_S = 10.0  # time constant of the running noise mean/variance (steadier than baseline)
+STATS_ALPHA = (1 / SAMPLE_HZ) / STATS_TAU_S
 # Relearn the resting orientation as a time constant, not a per-sample weight, so the
 # drift rate is independent of SAMPLE_HZ (the EMA runs once per quiet sample): alpha = dt / tau.
 BASELINE_TAU_S = 5.0
@@ -126,6 +134,14 @@ BASELINE_ALPHA = (1 / SAMPLE_HZ) / BASELINE_TAU_S
 
 async def read_msa311(queue):
     bx, by, bz = msa.acceleration  # per-axis resting baseline (the ~9.81 gravity vector)
+    # Running noise statistics of the quiet-state deviation norm: EWMA of the value and of
+    # its square give a streaming mean and variance. Seeded high (std ~0.1) so the initial
+    # threshold sits well above any real noise and converges DOWN over the first few
+    # STATS_TAU as quiet samples arrive — it never trips on the way down, so there is no
+    # warmup special-case. (Seeding low is unsafe: real noise would read as an event, the
+    # stats would freeze, and the threshold could never rise.)
+    mean = 0.0
+    mean_sq = 0.1**2
     last_move = 0.0
     win_start = time.monotonic()
     win_max = 0.0
@@ -136,12 +152,19 @@ async def read_msa311(queue):
         dx, dy, dz = x - bx, y - by, z - bz
         dyn = (dx * dx + dy * dy + dz * dz) ** 0.5  # ~0 at rest, spikes on movement
 
-        if dyn > MOVE_THRESHOLD:
+        std = max(mean_sq - mean * mean, 0.0) ** 0.5
+        threshold = mean + K_SIGMA * std
+
+        if dyn > threshold:
             last_move = now
         else:
-            bx += dx * BASELINE_ALPHA  # relearn resting orientation, quiet only
+            # Quiet: relearn the resting orientation AND update the noise statistics.
+            # Freezing both while over threshold stops a real event from inflating either.
+            bx += dx * BASELINE_ALPHA
             by += dy * BASELINE_ALPHA
             bz += dz * BASELINE_ALPHA
+            mean += (dyn - mean) * STATS_ALPHA
+            mean_sq += (dyn * dyn - mean_sq) * STATS_ALPHA
 
         if now - last_move < QUIET_S:
             await offer(queue, "vibration", dyn, now_timestamp())  # raw, every sample
