@@ -27,6 +27,10 @@ for (const k of SENSORS) chartData[k] = chartData[k] || [];
 const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
 const chart = echarts.init(document.getElementById('chart'), prefersDark ? 'dark' : null);
 chart.setOption({
+  // No entry animation: with ~1k points/series ECharts otherwise "draws in" every
+  // line over ~1s, which reads as the chart slowly populating on load. We want the
+  // full dataset to snap in at once.
+  animation: false,
   // Reuse the KPI colors from site.css so each line and its legend marker match the big
   // number up top. Series are declared in SENSORS order, so this palette lines up 1:1.
   color: SENSORS.map(k => getComputedStyle(document.getElementById(k)).color),
@@ -45,14 +49,17 @@ chart.setOption({
     { name: 'm/s²', position: 'right', offset: 120 },
   ].map(a => ({ type: 'value', scale: true, boundaryGap: ['10%', '10%'], ...a })),
   dataZoom: [{ type: 'inside' }, { type: 'slider' }],
-  series: [
-    { name: 'temperature', type: 'line', showSymbol: false, yAxisIndex: 0, data: chartData.temperature },
-    { name: 'humidity', type: 'line', showSymbol: false, yAxisIndex: 1, data: chartData.humidity },
-    { name: 'ppm', type: 'line', showSymbol: false, yAxisIndex: 2, data: chartData.ppm },
-    { name: 'voc', type: 'line', showSymbol: false, yAxisIndex: 3, data: chartData.voc },
-    { name: 'pressure', type: 'line', showSymbol: false, yAxisIndex: 4, data: chartData.pressure },
-    { name: 'vibration', type: 'line', showSymbol: false, yAxisIndex: 5, data: chartData.vibration },
-  ],
+  // One line per sensor, in SENSORS order so yAxisIndex lines up with the yAxis
+  // array above (0=C, 1=%, ... 5=m/s²) and with the color/legend arrays.
+  // sampling 'lttb': downsample each ~1k-point series to roughly pixel density,
+  // preserving peaks, so render cost tracks canvas width not point count; it also
+  // re-samples per zoom level, so zooming in still reveals full detail. large:
+  // engage the bulk-render path as the streaming series grow past the threshold.
+  series: SENSORS.map((k, i) => ({
+    name: k, type: 'line', showSymbol: false, yAxisIndex: i,
+    sampling: 'lttb', large: true,
+    data: chartData[k],
+  })),
 });
 
 // Keep a zoomed-in middle view anchored in time. ECharts stores the zoom window
