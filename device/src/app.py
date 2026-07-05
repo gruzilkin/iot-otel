@@ -21,7 +21,7 @@ import adafruit_scd30
 import adafruit_sgp40
 import grpc
 from adafruit_extended_bus import ExtendedI2C
-from adafruit_msa3xx import MSA311, DataRate, Mode, Range
+from adafruit_msa3xx import MSA311, BandWidth, DataRate, Mode, Range, Resolution
 from google.protobuf.timestamp_pb2 import Timestamp
 
 import ingest_pb2
@@ -46,9 +46,19 @@ scd = adafruit_scd30.SCD30(i2c)
 sgp = adafruit_sgp40.SGP40(i2c)
 lps = adafruit_lps2x.LPS22(i2c)  # barometric pressure, default addr 0x5D
 msa = MSA311(i2c)  # 3-axis accelerometer, fixed addr 0x62
-msa.range = Range.RANGE_4_G
-msa.data_rate = DataRate.RATE_125_HZ  # sensor must refresh >= our 100 Hz burst reads
+# Tuned for sensitivity to faint vibration (someone walking by, tremors) rather than
+# large motion. Range and bandwidth are the levers that actually move the noise floor:
+#   range 2g: finest quantization (~0.24 mg/LSB vs 0.49 at 4g); these sources never hit 2g.
+#   bandwidth 15.63 Hz: RMS noise scales with sqrt(bandwidth), so narrowing the analog
+#     low-pass from the 250 Hz default drops the resting floor ~4x (~0.05 -> ~0.012 m/s2).
+#     Footstep/quake energy is almost entirely < ~30 Hz, so nothing useful is filtered out.
+#   resolution 14-bit: already the library default and the max; set explicitly to document
+#     intent (the driver's scaling always uses the full 14 bits regardless of this setting).
 msa.power_mode = Mode.NORMAL
+msa.range = Range.RANGE_2_G
+msa.resolution = Resolution.RESOLUTION_14_BIT
+msa.data_rate = DataRate.RATE_62_5_HZ  # output rate; >= our steady 50 Hz reads, so each is fresh
+msa.bandwidth = BandWidth.WIDTH_15_63_HZ
 
 temperature, humidity = None, None
 
@@ -96,50 +106,44 @@ async def read_lps22(queue):
         await asyncio.sleep(1)
 
 
-# Adaptive accelerometer sampling. The "vibration" signal is the dynamic magnitude
-# |accel| - resting gravity, so it rests at ~0. When quiet we sample at IDLE_HZ (to
-# react quickly to the onset of shaking) but only emit the per-second peak; on
-# movement we switch to ACTIVE_HZ and stream every sample. We fall back to idle only
-# after staying active >= MIN_ACTIVE_S AND being quiet for >= QUIET_S (whichever is
-# longer).
-MOVE_THRESHOLD = 0.1  # m/s^2 deviation from rest that counts as movement (ambient noise sits < 0.05)
-IDLE_HZ = 50  # sample fast enough to catch the onset of a brief tap (~20 ms worst case)
-ACTIVE_HZ = 100
-MIN_ACTIVE_S = 1.0
-QUIET_S = 1.0
+# Accelerometer sampling for the "vibration" signal. We sample at a single steady
+# rate: with the analog bandwidth capped at 15.63 Hz (see the MSA311 setup above) there
+# is no content above ~16 Hz to chase, so the old idle/active rate switch bought nothing.
+# The signal is the norm of the per-axis deviation from a slowly-relearned resting
+# vector, sqrt(dx^2+dy^2+dz^2) — 1st-order sensitive in every direction, unlike the
+# scalar |accel|-baseline, which is nearly blind to lateral motion (footsteps).
+# Emission stays adaptive to keep DB volume down: during/just after an event (within
+# QUIET_S of the last over-threshold sample) we stream every sample; when quiet we emit
+# only the per-second peak (~0 at rest).
+SAMPLE_HZ = 50  # one steady rate; > 2x the 15.63 Hz bandwidth, catches onset within ~20 ms
+MOVE_THRESHOLD = 0.03  # m/s^2 deviation counting as movement; ~2-3x the ~0.012 floor — TUNE on hardware
+QUIET_S = 1.0  # keep streaming this long after the last over-threshold sample
 # Relearn the resting orientation as a time constant, not a per-sample weight, so the
-# drift rate is independent of IDLE_HZ (the EMA runs once per idle sample): alpha = dt / tau.
+# drift rate is independent of SAMPLE_HZ (the EMA runs once per quiet sample): alpha = dt / tau.
 BASELINE_TAU_S = 5.0
-BASELINE_ALPHA = (1 / IDLE_HZ) / BASELINE_TAU_S
-
-
-def accel_magnitude():
-    x, y, z = msa.acceleration
-    return (x * x + y * y + z * z) ** 0.5
+BASELINE_ALPHA = (1 / SAMPLE_HZ) / BASELINE_TAU_S
 
 
 async def read_msa311(queue):
-    baseline = accel_magnitude()  # ~9.81 m/s^2 at rest
-    active = False
-    active_since = 0.0
+    bx, by, bz = msa.acceleration  # per-axis resting baseline (the ~9.81 gravity vector)
     last_move = 0.0
     win_start = time.monotonic()
     win_max = 0.0
 
     while True:
         now = time.monotonic()
-        mag = accel_magnitude()
-        dyn = abs(mag - baseline)  # ~0 at rest, spikes on movement
-        moving = dyn > MOVE_THRESHOLD
+        x, y, z = msa.acceleration
+        dx, dy, dz = x - bx, y - by, z - bz
+        dyn = (dx * dx + dy * dy + dz * dz) ** 0.5  # ~0 at rest, spikes on movement
 
-        if moving:
+        if dyn > MOVE_THRESHOLD:
             last_move = now
-            if not active:
-                active, active_since = True, now
-        elif not active:
-            baseline += (mag - baseline) * BASELINE_ALPHA  # relearn resting orientation, quiet only
+        else:
+            bx += dx * BASELINE_ALPHA  # relearn resting orientation, quiet only
+            by += dy * BASELINE_ALPHA
+            bz += dz * BASELINE_ALPHA
 
-        if active:
+        if now - last_move < QUIET_S:
             await offer(queue, "vibration", dyn, now_timestamp())  # raw, every sample
         else:
             win_max = max(win_max, dyn)
@@ -147,10 +151,7 @@ async def read_msa311(queue):
                 await offer(queue, "vibration", win_max, now_timestamp())  # per-second peak
                 win_start, win_max = now, 0.0
 
-        if active and (now - active_since) >= MIN_ACTIVE_S and (now - last_move) >= QUIET_S:
-            active = False
-
-        await asyncio.sleep(1 / ACTIVE_HZ if active else 1 / IDLE_HZ)
+        await asyncio.sleep(1 / SAMPLE_HZ)
 
 
 async def readings(queue):
