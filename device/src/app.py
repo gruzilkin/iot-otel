@@ -103,10 +103,14 @@ async def read_lps22(queue):
 # after staying active >= MIN_ACTIVE_S AND being quiet for >= QUIET_S (whichever is
 # longer).
 MOVE_THRESHOLD = 0.1  # m/s^2 deviation from rest that counts as movement (ambient noise sits < 0.05)
-IDLE_HZ = 10
+IDLE_HZ = 50  # sample fast enough to catch the onset of a brief tap (~20 ms worst case)
 ACTIVE_HZ = 100
 MIN_ACTIVE_S = 1.0
 QUIET_S = 1.0
+# Relearn the resting orientation as a time constant, not a per-sample weight, so the
+# drift rate is independent of IDLE_HZ (the EMA runs once per idle sample): alpha = dt / tau.
+BASELINE_TAU_S = 5.0
+BASELINE_ALPHA = (1 / IDLE_HZ) / BASELINE_TAU_S
 
 
 def accel_magnitude():
@@ -133,7 +137,7 @@ async def read_msa311(queue):
             if not active:
                 active, active_since = True, now
         elif not active:
-            baseline += (mag - baseline) * 0.02  # relearn resting orientation, quiet only
+            baseline += (mag - baseline) * BASELINE_ALPHA  # relearn resting orientation, quiet only
 
         if active:
             await offer(queue, "vibration", dyn, now_timestamp())  # raw, every sample
