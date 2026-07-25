@@ -18,9 +18,81 @@
 </div>
 <div id="chart" class="chart"></div>
 <script>
-const SENSORS = ['temperature', 'humidity', 'ppm', 'voc', 'pressure', 'vibration'];
+// A sensor is measured in one of two ways, and the difference decides how it has to
+// be drawn.
+//
+//   continuous - sampled forever, so it is dense and always has a current value.
+//                lttb downsamples it to roughly pixel density, preserving peaks and
+//                re-sampling per zoom level so detail returns as you zoom in, and
+//                large engages the bulk-render path as streaming grows the series.
+//                Markers on every point would just be noise.
+//
+//   discrete   - only measured while something is happening, so it is a handful of
+//                short bursts separated by hours of no measurement at all. Joining
+//                the last reading of one burst to the first of the next draws a line
+//                across those hours, so splitOnGaps splices in a null to break it.
+//                lttb is off: it resamples on a fixed frame and can drop exactly
+//                those nulls, and a sparse series does not need it. Markers stay on,
+//                because a burst that downsampling reduces to a single point draws
+//                nothing at all as a bare line segment.
+const DRAW = {
+  continuous: {
+    prepare: points => points,
+    options: { showSymbol: false, sampling: 'lttb', large: true },
+  },
+  discrete: {
+    prepare: splitOnGaps,
+    options: { showSymbol: true, symbolSize: 3, connectNulls: false },
+  },
+};
+
+// Every per-sensor decision lives here: which axis it gets, the unit and precision
+// of its KPI, and how it is drawn. Everything below only maps over this table, so
+// adding a sensor is one row -- and the y-axes, colours, legend and yAxisIndex all
+// derive from this order by construction rather than by being kept in step by hand.
+const SERIES = [
+  { key: 'temperature', unit: ' C',    decimals: 2, draw: 'continuous', axis: { name: 'C',    position: 'left'  } },
+  { key: 'humidity',    unit: ' %',    decimals: 2, draw: 'continuous', axis: { name: '%',    position: 'left',  offset: 60 } },
+  { key: 'ppm',         unit: ' ppm',  decimals: 0, draw: 'continuous', axis: { name: 'ppm',  position: 'right' } },
+  { key: 'voc',         unit: '',      decimals: 0, draw: 'continuous', axis: { name: 'voc',  position: 'right', offset: 60 } },
+  { key: 'pressure',    unit: ' hPa',  decimals: 2, draw: 'continuous', axis: { name: 'hPa',  position: 'left',  offset: 120 } },
+  { key: 'vibration',   unit: ' m/s²', decimals: 2, draw: 'discrete',   axis: { name: 'm/s²', position: 'right', offset: 120 } },
+];
+const KEYS = SERIES.map(s => s.key);
+const BY_KEY = Object.fromEntries(SERIES.map(s => [s.key, s]));
+
 const chartData = {{.Data}};
-for (const k of SENSORS) chartData[k] = chartData[k] || [];
+for (const k of KEYS) chartData[k] = chartData[k] || [];
+
+// A null datum is what breaks an ECharts line; it only bridges one when connectNulls
+// is true, and that defaults to false.
+//
+// 10s is bounded on both sides by measured data: it has to clear the longest burst
+// (7.6s over two days) or the line would break inside a spike, and every second
+// beyond that leaves more real gaps joined (10s breaks 94% of them, 30s only 82%).
+// Those figures are the pessimistic case, from before the detector stopped firing on
+// its own noise; at a few dozen events a day the median gap is tens of minutes and
+// almost anything in this range works. Erring low is the safer direction: a break
+// inside one burst is a cosmetic blemish, and only lands where downsampling had
+// already dropped the detail, whereas erring high redraws the artefact this removes.
+const EVENT_GAP_MS = 10000;
+
+function splitOnGaps(points) {
+  const out = [];
+  for (let i = 0; i < points.length; i++) {
+    if (i && points[i][0] - points[i - 1][0] > EVENT_GAP_MS) {
+      out.push([points[i - 1][0] + 1, null]);
+    }
+    out.push(points[i]);
+  }
+  return out;
+}
+
+// chartData itself stays raw so merging, sorting and latestTime() never see nulls;
+// the drawing mode shapes it only on the way into the chart.
+function seriesData(series) {
+  return DRAW[series.draw].prepare(chartData[series.key]);
+}
 
 // ECharts paints a <canvas>, so it can't inherit the CSS color-scheme; read the
 // OS preference here and use its built-in dark theme to match (picked at load).
@@ -31,34 +103,22 @@ chart.setOption({
   // line over ~1s, which reads as the chart slowly populating on load. We want the
   // full dataset to snap in at once.
   animation: false,
-  // Reuse the KPI colors from site.css so each line and its legend marker match the big
-  // number up top. Series are declared in SENSORS order, so this palette lines up 1:1.
-  color: SENSORS.map(k => getComputedStyle(document.getElementById(k)).color),
+  // Reuse the KPI colors from site.css so each line and its legend marker match the
+  // big number up top; the KPI element ids are the series keys.
+  color: KEYS.map(k => getComputedStyle(document.getElementById(k)).color),
   tooltip: { trigger: 'axis' },
-  legend: { data: SENSORS },
+  legend: { data: KEYS },
   xAxis: { type: 'time' },
   // scale: don't force zero into the range (pressure sits ~1013, not near 0);
   // boundaryGap: pad the data extent by 10% each side. With dataZoom's default
   // filterMode, each axis rescales to the data actually visible in the window.
-  yAxis: [
-    { name: 'C', position: 'left' },
-    { name: '%', position: 'left', offset: 60 },
-    { name: 'ppm', position: 'right' },
-    { name: 'voc', position: 'right', offset: 60 },
-    { name: 'hPa', position: 'left', offset: 120 },
-    { name: 'm/s²', position: 'right', offset: 120 },
-  ].map(a => ({ type: 'value', scale: true, boundaryGap: ['10%', '10%'], ...a })),
+  yAxis: SERIES.map(s => ({
+    type: 'value', scale: true, boundaryGap: ['10%', '10%'], ...s.axis,
+  })),
   dataZoom: [{ type: 'inside' }, { type: 'slider' }],
-  // One line per sensor, in SENSORS order so yAxisIndex lines up with the yAxis
-  // array above (0=C, 1=%, ... 5=m/s²) and with the color/legend arrays.
-  // sampling 'lttb': downsample each ~1k-point series to roughly pixel density,
-  // preserving peaks, so render cost tracks canvas width not point count; it also
-  // re-samples per zoom level, so zooming in still reveals full detail. large:
-  // engage the bulk-render path as the streaming series grow past the threshold.
-  series: SENSORS.map((k, i) => ({
-    name: k, type: 'line', showSymbol: false, yAxisIndex: i,
-    sampling: 'lttb', large: true,
-    data: chartData[k],
+  series: SERIES.map((s, i) => ({
+    name: s.key, type: 'line', yAxisIndex: i, data: seriesData(s),
+    ...DRAW[s.draw].options,
   })),
 });
 
@@ -71,7 +131,7 @@ let zoomWindow = null; // { start, end } absolute ms, set only while parked in t
 
 function latestTime() {
   let max = null;
-  for (const k of SENSORS) {
+  for (const k of KEYS) {
     const arr = chartData[k];
     if (arr && arr.length) {
       const t = arr[arr.length - 1][0];
@@ -85,7 +145,7 @@ let renderTask;
 function renderChart() {
   clearTimeout(renderTask);
   renderTask = setTimeout(() => {
-    const opt = { series: SENSORS.map(k => ({ data: chartData[k] })) };
+    const opt = { series: SERIES.map(s => ({ data: seriesData(s) })) };
     // Re-pin the absolute window so newly appended data can't scroll a middle view.
     if (!followTail && zoomWindow) {
       opt.dataZoom = [{ startValue: zoomWindow.start, endValue: zoomWindow.end }];
@@ -95,7 +155,7 @@ function renderChart() {
 }
 
 function mergeUpdates(update) {
-  for (const k of SENSORS) {
+  for (const k of KEYS) {
     const m = new Map();
     (chartData[k] || []).forEach(e => m.set(e[0], e[1]));
     (update[k] || []).forEach(e => m.set(e[0], e[1]));
@@ -132,12 +192,10 @@ chart.on('datazoom', () => {
     : null;
 });
 
-const units = { temperature: ' C', humidity: ' %', ppm: ' ppm', voc: '', pressure: ' hPa', vibration: ' m/s²' };
-function updateKpi(name, value) {
-  const el = document.getElementById(name);
+function updateKpi(key, value) {
+  const el = document.getElementById(key);
   if (!el) return;
-  const text = (name === 'ppm' || name === 'voc') ? Math.round(value) : value.toFixed(2);
-  el.textContent = text + units[name];
+  el.textContent = value.toFixed(BY_KEY[key].decimals) + BY_KEY[key].unit;
 }
 
 // SSE stream of live readings. EventSource auto-reconnects (and handles
@@ -146,7 +204,7 @@ let firstConnect = true;
 const es = new EventSource(location.pathname + '/realtime');
 es.onmessage = e => {
   const m = JSON.parse(e.data);
-  for (const k of SENSORS) {
+  for (const k of KEYS) {
     if (m[k] !== undefined) { chartData[k].push([m.receivedAt, m[k]]); updateKpi(k, m[k]); }
   }
   renderChart();
