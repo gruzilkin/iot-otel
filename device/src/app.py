@@ -27,7 +27,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 import ingest_pb2
 import ingest_pb2_grpc
 from threadsafe_i2c import ThreadSafeExtendedI2C
-from vibration import EventBuffer, VibrationDetector
+from vibration import EventBuffer, VibrationDetector, format_ambient
 
 # Bounded so a server/network stall drops the oldest readings instead of growing
 # memory without bound on the Pi.
@@ -119,12 +119,20 @@ async def read_lps22(queue):
 # The MSA311 produces one XYZ sample at 125 Hz. We collapse the change from its
 # internal resting XYZ vector into one direction-independent magnitude for storage.
 SAMPLE_HZ = 125
-CALIBRATION_S = 60.0
 PRE_TRIGGER_S = 1.0
 TAIL_S = 1.0
-K_SIGMA = 5.0
-STATS_TAU_S = 60.0
 BASELINE_TAU_S = 2.0
+WARMUP_S = 60.0
+BASELINE_WINDOW_S = 300.0
+# Raise to report only stronger events, lower to report more. Detection runs on
+# window energy rather than single samples: at 125 Hz a per-sample threshold is
+# tested 10.8 million times a day, so even a 5-sigma line is crossed a couple of
+# hundred times a day by noise alone. See VibrationDetector for the calibration.
+DETECTION_MARGIN = 1.0
+# How often to log what the sensor is actually seeing. Only the recorded events
+# reach the database, so the logs are the only unbiased view of the ambient
+# distribution the thresholds above are supposed to sit on top of.
+AMBIENT_REPORT_S = 3600.0
 
 
 @dataclass(frozen=True)
@@ -169,13 +177,15 @@ async def sample_msa311(raw_queue):
 async def detect_vibration(raw_queue, outgoing_queue):
     """Consume raw XYZ samples and emit only calibrated vibration events."""
     detector = VibrationDetector(
-        calibration_seconds=CALIBRATION_S,
+        sample_hz=SAMPLE_HZ,
+        baseline_window_seconds=BASELINE_WINDOW_S,
+        margin=DETECTION_MARGIN,
         baseline_tau_seconds=BASELINE_TAU_S,
-        stats_tau_seconds=STATS_TAU_S,
         tail_seconds=TAIL_S,
-        sigma_multiplier=K_SIGMA,
+        warmup_seconds=WARMUP_S,
     )
     event_buffer = EventBuffer(round(PRE_TRIGGER_S * SAMPLE_HZ))
+    next_report_at = None
 
     while True:
         sample = await raw_queue.get()
@@ -183,13 +193,21 @@ async def detect_vibration(raw_queue, outgoing_queue):
             return
         result = detector.process(sample.xyz, sample.monotonic_at)
 
+        if next_report_at is not None and sample.monotonic_at >= next_report_at:
+            next_report_at = sample.monotonic_at + AMBIENT_REPORT_S
+            for line in format_ambient(detector.ambient_report(sample.monotonic_at)):
+                print(line)
+
         if result.just_calibrated:
-            print(
-                "Vibration detector calibrated:",
-                f"mean={detector.noise_mean:.5f}",
-                f"sigma={detector.noise_sigma:.5f}",
-                f"threshold={detector.threshold:.5f} m/s²",
-            )
+            next_report_at = sample.monotonic_at + AMBIENT_REPORT_S
+            sigma = detector.noise_sigma
+            print(f"Vibration detector armed: noise sigma={sigma:.5f} m/s²")
+            for window_s, amplitude in detector.sensitivity():
+                relative = amplitude / sigma if sigma else float("inf")
+                print(
+                    f"  {window_s * 1000:6.0f} ms window trips at"
+                    f" {amplitude:.5f} m/s² ({relative:.2f}x noise)"
+                )
             event_buffer.clear()
         elif result.ready:
             if result.event_ended:
