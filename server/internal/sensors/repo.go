@@ -19,7 +19,7 @@ type Querier interface {
 // last point in range. UNION (not UNION ALL) deduplicates identical rows.
 const smartFindSQL = `(SELECT sensor_value, received_at FROM sensor_data
  WHERE device_id = $1 AND sensor_name = $2 AND received_at >= $3 AND received_at <= $4
- ORDER BY id ASC LIMIT 1)
+ ORDER BY received_at ASC, id ASC LIMIT 1)
 UNION
 (SELECT sensor_value, received_at FROM sensor_data JOIN sensor_data_weights USING (id)
  WHERE device_id = $1 AND sensor_name = $2 AND received_at >= $3 AND received_at <= $4
@@ -27,7 +27,7 @@ UNION
 UNION
 (SELECT sensor_value, received_at FROM sensor_data
  WHERE device_id = $1 AND sensor_name = $2 AND received_at >= $3 AND received_at <= $4
- ORDER BY id DESC LIMIT 1)`
+ ORDER BY received_at DESC, id DESC LIMIT 1)`
 
 type pgxRepo struct{ q Querier }
 

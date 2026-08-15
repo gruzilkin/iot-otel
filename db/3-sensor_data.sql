@@ -8,3 +8,6 @@ CREATE TABLE sensor_data (
 );
 CREATE INDEX sensor_data_device_sensor_idx ON sensor_data(device_id, sensor_name);
 CREATE INDEX sensor_data_received_at_idx ON sensor_data(received_at);
+CREATE INDEX sensor_data_stream_time_idx
+    ON sensor_data(device_id, sensor_name, received_at, id)
+    INCLUDE (sensor_value);
