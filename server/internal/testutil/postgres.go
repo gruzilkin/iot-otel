@@ -17,14 +17,13 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// schemaFiles are applied, in order, to a fresh container. 5-dev-seed.sql is
-// intentionally skipped: integration tests own their fixtures.
+// schemaFiles are applied, in order, to a fresh container. All of db/ is schema;
+// integration tests own their fixtures (the dev seed lives in dev/, not here).
 var schemaFiles = []string{
 	"1-devices.sql",
 	"2-device_access_tokens.sql",
 	"3-sensor_data.sql",
 	"4-sensor_data_weights.sql",
-	"6-sessions.sql",
 }
 
 // Postgres is a throwaway Postgres container plus a connected pool.

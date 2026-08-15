@@ -40,7 +40,7 @@ is lost on crash (accepted trade-off — Postgres is the source of truth).
 | `server/internal/{config,storage,auth,ingest,hub,sensors,charts,devices,realtime,metrics,web}` | server packages |
 | `device/` | Python device client (gRPC stubs generated, not committed) |
 | `db_optimizer/` | Python downsampling/retention worker (reused unchanged) |
-| `db/*.sql` | schema + dev seed + sessions table |
+| `db/*.sql` | schema (applied on first boot) |
 
 ## Configuration
 
