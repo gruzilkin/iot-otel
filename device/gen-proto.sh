@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Regenerate the Python gRPC stubs from the single source proto for LOCAL dev
-# (e.g. running src/sim.py from .venv). The device image generates these the same
+# (e.g. IDE tooling against src/app.py). The device image generates these the same
 # way at build time, so the stubs are intentionally NOT committed.
 set -eu
 cd "$(dirname "$0")"

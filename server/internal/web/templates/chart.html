@@ -14,85 +14,32 @@
   <div class="item" id="ppm">– ppm</div>
   <div class="item" id="voc">– voc</div>
   <div class="item" id="pressure">– hPa</div>
-  <div class="item" id="vibration">– m/s²</div>
 </div>
 <div id="chart" class="chart"></div>
 <script>
-// A sensor is measured in one of two ways, and the difference decides how it has to
-// be drawn.
-//
-//   continuous - sampled forever, so it is dense and always has a current value.
-//                lttb downsamples it to roughly pixel density, preserving peaks and
-//                re-sampling per zoom level so detail returns as you zoom in, and
-//                large engages the bulk-render path as streaming grows the series.
-//                Markers on every point would just be noise.
-//
-//   discrete   - only measured while something is happening, so it is a handful of
-//                short bursts separated by hours of no measurement at all. Joining
-//                the last reading of one burst to the first of the next draws a line
-//                across those hours, so splitOnGaps splices in a null to break it.
-//                lttb is off: it resamples on a fixed frame and can drop exactly
-//                those nulls, and a sparse series does not need it. Markers stay on,
-//                because a burst that downsampling reduces to a single point draws
-//                nothing at all as a bare line segment.
-const DRAW = {
-  continuous: {
-    prepare: points => points,
-    options: { showSymbol: false, sampling: 'lttb', large: true },
-  },
-  discrete: {
-    prepare: splitOnGaps,
-    options: { showSymbol: true, symbolSize: 3, connectNulls: false },
-  },
-};
+// Every series is dense and always has a current value, so they all draw the same
+// way: lttb downsamples to roughly pixel density, preserving peaks and re-sampling
+// per zoom level so detail returns as you zoom in, and large engages the
+// bulk-render path as streaming grows the series. Markers on every point would
+// just be noise.
+const DRAW_OPTIONS = { showSymbol: false, sampling: 'lttb', large: true };
 
-// Every per-sensor decision lives here: which axis it gets, the unit and precision
-// of its KPI, and how it is drawn. Everything below only maps over this table, so
-// adding a sensor is one row -- and the y-axes, colours, legend and yAxisIndex all
-// derive from this order by construction rather than by being kept in step by hand.
+// Every per-sensor decision lives here: which axis it gets, and the unit and
+// precision of its KPI. Everything below only maps over this table, so adding a
+// sensor is one row -- and the y-axes, colours, legend and yAxisIndex all derive
+// from this order by construction rather than by being kept in step by hand.
 const SERIES = [
-  { key: 'temperature', unit: ' C',    decimals: 2, draw: 'continuous', axis: { name: 'C',    position: 'left'  } },
-  { key: 'humidity',    unit: ' %',    decimals: 2, draw: 'continuous', axis: { name: '%',    position: 'left',  offset: 60 } },
-  { key: 'ppm',         unit: ' ppm',  decimals: 0, draw: 'continuous', axis: { name: 'ppm',  position: 'right' } },
-  { key: 'voc',         unit: '',      decimals: 0, draw: 'continuous', axis: { name: 'voc',  position: 'right', offset: 60 } },
-  { key: 'pressure',    unit: ' hPa',  decimals: 2, draw: 'continuous', axis: { name: 'hPa',  position: 'left',  offset: 120 } },
-  { key: 'vibration',   unit: ' m/s²', decimals: 2, draw: 'discrete',   axis: { name: 'm/s²', position: 'right', offset: 120 } },
+  { key: 'temperature', unit: ' C',    decimals: 2, axis: { name: 'C',    position: 'left'  } },
+  { key: 'humidity',    unit: ' %',    decimals: 2, axis: { name: '%',    position: 'left',  offset: 60 } },
+  { key: 'ppm',         unit: ' ppm',  decimals: 0, axis: { name: 'ppm',  position: 'right' } },
+  { key: 'voc',         unit: '',      decimals: 0, axis: { name: 'voc',  position: 'right', offset: 60 } },
+  { key: 'pressure',    unit: ' hPa',  decimals: 2, axis: { name: 'hPa',  position: 'left',  offset: 120 } },
 ];
 const KEYS = SERIES.map(s => s.key);
 const BY_KEY = Object.fromEntries(SERIES.map(s => [s.key, s]));
 
 const chartData = {{.Data}};
 for (const k of KEYS) chartData[k] = chartData[k] || [];
-
-// A null datum is what breaks an ECharts line; it only bridges one when connectNulls
-// is true, and that defaults to false.
-//
-// 10s is bounded on both sides by measured data: it has to clear the longest burst
-// (7.6s over two days) or the line would break inside a spike, and every second
-// beyond that leaves more real gaps joined (10s breaks 94% of them, 30s only 82%).
-// Those figures are the pessimistic case, from before the detector stopped firing on
-// its own noise; at a few dozen events a day the median gap is tens of minutes and
-// almost anything in this range works. Erring low is the safer direction: a break
-// inside one burst is a cosmetic blemish, and only lands where downsampling had
-// already dropped the detail, whereas erring high redraws the artefact this removes.
-const EVENT_GAP_MS = 10000;
-
-function splitOnGaps(points) {
-  const out = [];
-  for (let i = 0; i < points.length; i++) {
-    if (i && points[i][0] - points[i - 1][0] > EVENT_GAP_MS) {
-      out.push([points[i - 1][0] + 1, null]);
-    }
-    out.push(points[i]);
-  }
-  return out;
-}
-
-// chartData itself stays raw so merging, sorting and latestTime() never see nulls;
-// the drawing mode shapes it only on the way into the chart.
-function seriesData(series) {
-  return DRAW[series.draw].prepare(chartData[series.key]);
-}
 
 // ECharts paints a <canvas>, so it can't inherit the CSS color-scheme; read the
 // OS preference here and use its built-in dark theme to match (picked at load).
@@ -117,8 +64,8 @@ chart.setOption({
   })),
   dataZoom: [{ type: 'inside' }, { type: 'slider' }],
   series: SERIES.map((s, i) => ({
-    name: s.key, type: 'line', yAxisIndex: i, data: seriesData(s),
-    ...DRAW[s.draw].options,
+    name: s.key, type: 'line', yAxisIndex: i, data: chartData[s.key],
+    ...DRAW_OPTIONS,
   })),
 });
 
@@ -145,7 +92,7 @@ let renderTask;
 function renderChart() {
   clearTimeout(renderTask);
   renderTask = setTimeout(() => {
-    const opt = { series: SERIES.map(s => ({ data: seriesData(s) })) };
+    const opt = { series: SERIES.map(s => ({ data: chartData[s.key] })) };
     // Re-pin the absolute window so newly appended data can't scroll a middle view.
     if (!followTail && zoomWindow) {
       opt.dataZoom = [{ startValue: zoomWindow.start, endValue: zoomWindow.end }];

@@ -1,6 +1,6 @@
 # Local development stack for Phase 1 verification.
 # Brings up Postgres initialised with the schema (db/*.sql) plus a dev seed
-# (a device + token). Run iotd and the device simulator against it; see README.
+# (a device + token). Run iotd against it; see README.
 services:
   db:
     image: postgres:16

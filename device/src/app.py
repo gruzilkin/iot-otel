@@ -1,4 +1,4 @@
-"""Raspberry Pi sensor client: reads SCD30, SGP40, LPS22 and MSA311 over I2C and
+"""Raspberry Pi sensor client: reads SCD30, SGP40 and LPS22 over I2C and
 streams readings to the iotd gRPC ingest service.
 
 Transport is gRPC client-streaming with device-side timestamps. Auth is a bearer
@@ -12,50 +12,52 @@ Env:
   ALTITUDE            optional SCD30 altitude (m)
 """
 import asyncio
-from dataclasses import dataclass
 import os
 import signal
-import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import adafruit_lps2x
 import adafruit_scd30
 import adafruit_sgp40
 import grpc
-from adafruit_msa3xx import MSA311, DataRate, Mode, Range
+from adafruit_extended_bus import ExtendedI2C
 from google.protobuf.timestamp_pb2 import Timestamp
 
 import ingest_pb2
 import ingest_pb2_grpc
-from threadsafe_i2c import ThreadSafeExtendedI2C
-from vibration import EventBuffer, VibrationDetector, format_ambient
 
 # Bounded so a server/network stall drops the oldest readings instead of growing
 # memory without bound on the Pi.
 QUEUE_MAX = 1000
-RAW_ACCEL_QUEUE_MAX = 512  # about four seconds at 125 Hz
 RECONNECT_DELAY = 5
 SHUTDOWN_DRAIN_TIMEOUT = 10  # seconds to flush the backlog on shutdown before giving up
 
 # Enqueued once at shutdown so the streamer flushes the remaining backlog and then
 # half-closes the gRPC stream cleanly, rather than being cancelled mid-send.
 _SHUTDOWN = object()
-_RAW_SHUTDOWN = object()
 
 # Open the Linux I2C device directly. Using board.SCL/board.SDA makes Blinka
 # perform GPIO board detection, which is unreliable inside a container even when
 # /dev/i2c-1 is correctly mapped. Linux controls the bus frequency; the frequency
 # argument accepted by CircuitPython busio is not settable through this backend.
-i2c = ThreadSafeExtendedI2C(1)
+i2c = ExtendedI2C(1)
 scd = adafruit_scd30.SCD30(i2c)
 sgp = adafruit_sgp40.SGP40(i2c)
 lps = adafruit_lps2x.LPS22(i2c)  # barometric pressure, default addr 0x5D
-msa = MSA311(i2c)  # 3-axis accelerometer, fixed addr 0x62
-# At 125 Hz ODR the MSA311's normal-mode bandwidth is 62.5 Hz. The bandwidth
-# register exposed by the shared MSA301/311 driver only controls low-power mode,
-# so it is intentionally not set here.
-msa.power_mode = Mode.NORMAL
-msa.range = Range.RANGE_2_G
-msa.data_rate = DataRate.RATE_125_HZ
+
+# Every sensor read runs on this single worker thread: slow driver waits (the
+# SGP40 conversion takes ~500 ms) stay off the event loop, and one worker
+# serializes all bus transactions by construction — Blinka's cooperative bus
+# lock is not thread-safe, so overlapping reads from a thread pool would race.
+_i2c_executor = ThreadPoolExecutor(max_workers=1)
+
+
+async def read_sensor(fn, *args, **kwargs):
+    return await asyncio.get_running_loop().run_in_executor(
+        _i2c_executor, partial(fn, *args, **kwargs)
+    )
+
 
 temperature, humidity = None, None
 
@@ -72,9 +74,7 @@ async def offer(queue, name, value, ts):
 async def read_sgp40(queue):
     while True:
         if temperature is not None and humidity is not None:
-            # The driver waits about 500 ms for conversion. Run it off the event
-            # loop so accelerometer sampling continues during that wait.
-            voc_index = await asyncio.to_thread(
+            voc_index = await read_sensor(
                 sgp.measure_index,
                 temperature=temperature,
                 relative_humidity=humidity,
@@ -86,7 +86,7 @@ async def read_sgp40(queue):
 
 async def read_scd30(queue):
     while True:
-        sample = await asyncio.to_thread(read_scd30_sample)
+        sample = await read_sensor(read_scd30_sample)
         if sample is not None:
             global temperature, humidity
             temperature, humidity, co2 = sample
@@ -111,123 +111,9 @@ def now_timestamp():
 
 async def read_lps22(queue):
     while True:
-        pressure = await asyncio.to_thread(lambda: lps.pressure)
+        pressure = await read_sensor(lambda: lps.pressure)
         await offer(queue, "pressure", pressure, now_timestamp())  # hPa
         await asyncio.sleep(1)
-
-
-# The MSA311 produces one XYZ sample at 125 Hz. We collapse the change from its
-# internal resting XYZ vector into one direction-independent magnitude for storage.
-SAMPLE_HZ = 125
-PRE_TRIGGER_S = 1.0
-TAIL_S = 1.0
-BASELINE_TAU_S = 2.0
-WARMUP_S = 60.0
-BASELINE_WINDOW_S = 300.0
-# Raise to report only stronger events, lower to report more. Detection runs on
-# window energy rather than single samples: at 125 Hz a per-sample threshold is
-# tested 10.8 million times a day, so even a 5-sigma line is crossed a couple of
-# hundred times a day by noise alone. See VibrationDetector for the calibration.
-DETECTION_MARGIN = 1.0
-# How often to log what the sensor is actually seeing. Only the recorded events
-# reach the database, so the logs are the only unbiased view of the ambient
-# distribution the thresholds above are supposed to sit on top of.
-AMBIENT_REPORT_S = 3600.0
-
-
-@dataclass(frozen=True)
-class AccelerationSample:
-    xyz: tuple[float, float, float]
-    monotonic_at: float
-    observed_at: Timestamp
-
-
-async def sample_msa311(raw_queue):
-    """Read the MSA311 at a steady rate and enqueue unfiltered XYZ samples."""
-    period = 1.0 / SAMPLE_HZ
-    deadline = time.monotonic()
-    dropped = 0
-
-    while True:
-        now = time.monotonic()
-        sample = AccelerationSample(msa.acceleration, now, now_timestamp())
-        try:
-            raw_queue.put_nowait(sample)
-        except asyncio.QueueFull:
-            # Never stall hardware sampling behind detector work. This should not
-            # happen in normal operation; make any loss visible if it does.
-            raw_queue.get_nowait()
-            raw_queue.put_nowait(sample)
-            dropped += 1
-            if dropped == 1 or dropped % SAMPLE_HZ == 0:
-                print(f"Accelerometer queue full; dropped {dropped} raw samples")
-
-        # Absolute deadlines prevent I2C and scheduler overhead from accumulating
-        # into permanent sample-rate drift. Skip missed slots instead of burst-reading
-        # duplicate sensor values to catch up.
-        deadline += period
-        delay = deadline - time.monotonic()
-        if delay <= 0:
-            deadline += (int(-delay / period) + 1) * period
-            await asyncio.sleep(0)
-        else:
-            await asyncio.sleep(delay)
-
-
-async def detect_vibration(raw_queue, outgoing_queue):
-    """Consume raw XYZ samples and emit only calibrated vibration events."""
-    detector = VibrationDetector(
-        sample_hz=SAMPLE_HZ,
-        baseline_window_seconds=BASELINE_WINDOW_S,
-        margin=DETECTION_MARGIN,
-        baseline_tau_seconds=BASELINE_TAU_S,
-        tail_seconds=TAIL_S,
-        warmup_seconds=WARMUP_S,
-    )
-    event_buffer = EventBuffer(round(PRE_TRIGGER_S * SAMPLE_HZ))
-    next_report_at = None
-
-    while True:
-        sample = await raw_queue.get()
-        if sample is _RAW_SHUTDOWN:
-            return
-        result = detector.process(sample.xyz, sample.monotonic_at)
-
-        if next_report_at is not None and sample.monotonic_at >= next_report_at:
-            next_report_at = sample.monotonic_at + AMBIENT_REPORT_S
-            for line in format_ambient(detector.ambient_report(sample.monotonic_at)):
-                print(line)
-
-        if result.just_calibrated:
-            next_report_at = sample.monotonic_at + AMBIENT_REPORT_S
-            sigma = detector.noise_sigma
-            print(f"Vibration detector armed: noise sigma={sigma:.5f} m/s²")
-            for window_s, amplitude in detector.sensitivity():
-                relative = amplitude / sigma if sigma else float("inf")
-                print(
-                    f"  {window_s * 1000:6.0f} ms window trips at"
-                    f" {amplitude:.5f} m/s² ({relative:.2f}x noise)"
-                )
-            event_buffer.clear()
-        elif result.ready:
-            if result.event_ended:
-                await offer(
-                    outgoing_queue, "vibration", 0.0, sample.observed_at
-                )
-
-            if result.event_started:
-                for value, output_ts in event_buffer.flush_with_zero():
-                    await offer(outgoing_queue, "vibration", value, output_ts)
-
-            if result.active:
-                await offer(
-                    outgoing_queue,
-                    "vibration",
-                    result.value,
-                    sample.observed_at,
-                )
-            else:
-                event_buffer.append(result.value, sample.observed_at)
 
 
 async def readings(queue):
@@ -283,22 +169,16 @@ def init_sensors():
 async def main():
     init_sensors()
     outgoing_queue = asyncio.Queue(maxsize=QUEUE_MAX)
-    raw_accel_queue = asyncio.Queue(maxsize=RAW_ACCEL_QUEUE_MAX)
     stopping = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stopping.set)
 
-    # Hardware readers produce either final sensor readings or raw acceleration.
     sensor_tasks = [
         asyncio.create_task(read_sgp40(outgoing_queue)),
         asyncio.create_task(read_scd30(outgoing_queue)),
         asyncio.create_task(read_lps22(outgoing_queue)),
-        asyncio.create_task(sample_msa311(raw_accel_queue)),
     ]
-    detector_task = asyncio.create_task(
-        detect_vibration(raw_accel_queue, outgoing_queue)
-    )
     stream_task = asyncio.create_task(streamer(outgoing_queue, stopping))
 
     # Run until a shutdown signal (or the streamer unexpectedly exits).
@@ -306,13 +186,10 @@ async def main():
     await asyncio.wait({stream_task, stop_wait}, return_when=asyncio.FIRST_COMPLETED)
     stop_wait.cancel()
 
-    # 1. Stop hardware readers first. Then let the detector consume every raw
-    #    sample already queued before it exits.
+    # 1. Stop hardware readers first, so nothing new enters the outgoing queue.
     for task in sensor_tasks:
         task.cancel()
     await asyncio.gather(*sensor_tasks, return_exceptions=True)
-    await raw_accel_queue.put(_RAW_SHUTDOWN)
-    await detector_task
 
     # 2. Let the streamer go down last: flush the outgoing backlog and half-close the gRPC
     #    stream cleanly. Bounded so a dead network can't stall shutdown.

@@ -38,7 +38,7 @@ is lost on crash (accepted trade-off — Postgres is the source of truth).
 | `proto/` | gRPC contract (single source of truth; `buf.yaml`/`buf.gen.yaml` at repo root) |
 | `server/api/gen` | generated Go stubs (committed; regenerate with `buf generate`) |
 | `server/internal/{config,storage,auth,ingest,hub,sensors,charts,devices,realtime,metrics,web}` | server packages |
-| `device/` | Python device client + simulator (gRPC stubs generated, not committed) |
+| `device/` | Python device client (gRPC stubs generated, not committed) |
 | `db_optimizer/` | Python downsampling/retention worker (reused unchanged) |
 | `db/*.sql` | schema + dev seed + sessions table |
 
@@ -73,7 +73,7 @@ The contract lives in `proto/` and is the single source of truth for both servic
   ```
 
 - **Device** stubs are generated, not committed: the image builds them at `docker build`
-  time (see `device/Dockerfile`). For local dev (running `src/sim.py` from `.venv`):
+  time (see `device/Dockerfile`). To generate them locally (e.g. for IDE tooling):
 
   ```sh
   device/gen-proto.sh
@@ -97,15 +97,9 @@ terminates TLS for the device gRPC stream.
 docker compose -f docker-compose.device.yml up --build -d
 ```
 
-A hardware-free simulator is available for testing the server without a Pi:
-
-```sh
-TARGET=localhost:50051 BEARER=<token> device/.venv/bin/python device/src/sim.py
-```
-
 ## Verification notes
 
-- Data path verified end-to-end against Postgres: simulator → gRPC → rows with
+- Data path verified end-to-end against Postgres: device client → gRPC → rows with
   device timestamps and ascending ids; `db_optimizer` populates
   `sensor_data_weights`.
 - Web path verified: authed `/devices`, `/charts/{id}` + `/partial` (ownership
