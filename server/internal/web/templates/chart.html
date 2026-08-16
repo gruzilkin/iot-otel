@@ -45,6 +45,17 @@ for (const k of KEYS) chartData[k] = chartData[k] || [];
 // OS preference here and use its built-in dark theme to match (picked at load).
 const prefersDark = matchMedia('(prefers-color-scheme: dark)').matches;
 const chart = echarts.init(document.getElementById('chart'), prefersDark ? 'dark' : null);
+
+// Open zoomed to the last 3 hours. Each dataZoom edge is tracked in the mode it
+// was set in: startValue pins the left edge to an absolute time, while end: 100
+// keeps the right edge in percent mode so it re-sticks to the newest sample as
+// data streams in (endValue would freeze it at the load-time extent). With no
+// data yet the spread is empty and the full range shows.
+const INITIAL_WINDOW_MS = 3 * 60 * 60 * 1000;
+const newest = latestTime();
+const initialWindow = newest === null
+  ? {}
+  : { startValue: newest - INITIAL_WINDOW_MS, end: 100 };
 chart.setOption({
   // No entry animation: with ~1k points/series ECharts otherwise "draws in" every
   // line over ~1s, which reads as the chart slowly populating on load. We want the
@@ -62,7 +73,7 @@ chart.setOption({
   yAxis: SERIES.map(s => ({
     type: 'value', scale: true, boundaryGap: ['10%', '10%'], ...s.axis,
   })),
-  dataZoom: [{ type: 'inside' }, { type: 'slider' }],
+  dataZoom: [{ type: 'inside', ...initialWindow }, { type: 'slider', ...initialWindow }],
   series: SERIES.map((s, i) => ({
     name: s.key, type: 'line', yAxisIndex: i, data: chartData[s.key],
     ...DRAW_OPTIONS,
@@ -125,6 +136,12 @@ function fetchUpdates(start, end) {
   fetch(url)
     .then(r => { if (r.status === 401) { location.reload(); return null; } return r.json(); })
     .then(d => { if (d) mergeUpdates(d); });
+}
+
+// {{.Data}} spreads its point budget over the full range, and setting the window
+// via setOption fires no datazoom event, so fetch full detail for it once here.
+if (initialWindow.startValue != null) {
+  scheduleFetch(initialWindow.startValue, initialWindow.endValue);
 }
 
 chart.on('datazoom', () => {
