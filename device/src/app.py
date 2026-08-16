@@ -17,7 +17,6 @@ import signal
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
-import adafruit_lps2x
 import adafruit_scd30
 import adafruit_sgp40
 import grpc
@@ -26,6 +25,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 import ingest_pb2
 import ingest_pb2_grpc
+from lps22 import LPS22
 
 # Bounded so a server/network stall drops the oldest readings instead of growing
 # memory without bound on the Pi.
@@ -44,7 +44,8 @@ _SHUTDOWN = object()
 i2c = ExtendedI2C(1)
 scd = adafruit_scd30.SCD30(i2c)
 sgp = adafruit_sgp40.SGP40(i2c)
-lps = adafruit_lps2x.LPS22(i2c)  # barometric pressure, default addr 0x5D
+lps = LPS22(i2c)  # barometric pressure, default addr 0x5D
+print(f"LPS22 BDU {'enabled' if lps.block_data_update else 'NOT SET'}")
 
 # Every sensor read runs on this single worker thread: slow driver waits (the
 # SGP40 conversion takes ~500 ms) stay off the event loop, and one worker
